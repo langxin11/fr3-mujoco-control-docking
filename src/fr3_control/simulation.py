@@ -46,6 +46,21 @@ def _metrics(log: dict[str, np.ndarray], scenario: str) -> dict[str, float | str
             np.sum(np.abs(log["current"] * log["voltage"])) * SIM.control_dt
         ),
     }
+    # 仅在各任务的稳态跟踪区间统计，避免两段过渡轨迹混入比较。
+    segments = {
+        "circle": (SIM.transition_end, SIM.circle_end),
+        "figure8": (SIM.figure8_start, SIM.figure8_end),
+    }
+    for name, (start, end) in segments.items():
+        mask = (log["time"] >= start) & (log["time"] <= end)
+        segment_position = ee_norm[mask]
+        segment_orientation = orientation_error[mask]
+        metrics[f"{name}_ee_rmse_mm"] = float(1e3 * np.sqrt(np.mean(segment_position**2)))
+        metrics[f"{name}_ee_max_mm"] = float(1e3 * np.max(segment_position))
+        metrics[f"{name}_orientation_rmse_deg"] = float(
+            np.rad2deg(np.sqrt(np.mean(segment_orientation**2)))
+        )
+        metrics[f"{name}_orientation_max_deg"] = float(np.rad2deg(np.max(segment_orientation)))
     if scenario == "disturbance":
         after = np.flatnonzero(log["time"] >= SIM.disturbance_end)
         # 恢复时间定义为撤力后末端误差首次回到 10 mm 以内所需时间。

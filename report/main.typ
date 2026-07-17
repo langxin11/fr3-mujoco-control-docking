@@ -199,11 +199,33 @@ $ dot.double(e)+K_d dot(e)+K_p e=0. $
 == 标称轨迹跟踪
 
 #figure(
-  image("../figures/trajectory_3d.png", width: 82%),
-  caption: [标称场景下圆与 8 字组合参考轨迹及实际末端轨迹],
+  image("../figures/trajectory_3d.png", width: 100%),
+  caption: [标称场景下圆轨迹与 8 字轨迹的分开对比（RGB 箭头表示参考末端 $x$--$y$--$z$ 姿态标架）],
 )
 
-三维轨迹对比表明，两种控制器均能完成两个平面方向不同的组合轨迹，但计算力矩控制的实际轨迹与期望轨迹重合度更高。为避免仅凭图形作定性判断，进一步采用末端 RMSE 和最大误差进行量化评价。
+图中左侧仅保留 1.5--6.5 s 的 $y$--$z$ 圆轨迹，右侧仅保留 8--13 s 的 $x$--$y$ 平面 8 字轨迹，不包含启动和段间过渡。分开绘制避免了两个平面轨迹在同一三维坐标系中互相遮挡。每条参考轨迹上等时间间隔绘制 8 个末端姿态标架，红、绿、蓝箭头依次表示工具坐标系的 $x$、$y$、$z$ 轴，用于直观展示轨迹运动过程中的姿态变化。
+
+#figure(
+  image("../figures/segment_tracking_error.png", width: 96%),
+  caption: [圆轨迹与 8 字轨迹的位置、姿态误差分段对比],
+)
+
+#figure(
+  table(
+    columns: (2.2cm, 2.2cm, 2.6cm, 2.6cm, 2.8cm),
+    stroke: 0.5pt,
+    inset: 5pt,
+    align: center,
+    table.header([轨迹段], [控制器], [位置 RMSE/mm], [位置最大误差/mm], [姿态 RMSE/°]),
+    [圆轨迹], [PD], [#f2(pd-nom.at("circle_ee_rmse_mm"))], [#f2(pd-nom.at("circle_ee_max_mm"))], [#f2(pd-nom.at("circle_orientation_rmse_deg"))],
+    [圆轨迹], [计算力矩], [#f2(ctc-nom.at("circle_ee_rmse_mm"))], [#f2(ctc-nom.at("circle_ee_max_mm"))], [#f2(ctc-nom.at("circle_orientation_rmse_deg"))],
+    [8 字轨迹], [PD], [#f2(pd-nom.at("figure8_ee_rmse_mm"))], [#f2(pd-nom.at("figure8_ee_max_mm"))], [#f2(pd-nom.at("figure8_orientation_rmse_deg"))],
+    [8 字轨迹], [计算力矩], [#f2(ctc-nom.at("figure8_ee_rmse_mm"))], [#f2(ctc-nom.at("figure8_ee_max_mm"))], [#f2(ctc-nom.at("figure8_orientation_rmse_deg"))],
+  ),
+  caption: [标称场景分轨迹段量化指标],
+)
+
+在圆轨迹段，PD 和计算力矩控制的位置 RMSE 分别为 #f2(pd-nom.at("circle_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("circle_ee_rmse_mm")) mm，计算力矩控制降低约 #reduction(pd-nom.at("circle_ee_rmse_mm"), ctc-nom.at("circle_ee_rmse_mm"))%。在 8 字轨迹段，两者的位置 RMSE 分别为 #f2(pd-nom.at("figure8_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("figure8_ee_rmse_mm")) mm，降低约 #reduction(pd-nom.at("figure8_ee_rmse_mm"), ctc-nom.at("figure8_ee_rmse_mm"))%。8 字段包含更频繁的曲率变化，因而两种控制器的位置 RMSE 均高于各自的圆轨迹结果。姿态指标则呈现不同结果：PD 在圆和 8 字段的姿态 RMSE 分别为 #f2(pd-nom.at("circle_orientation_rmse_deg"))° 和 #f2(pd-nom.at("figure8_orientation_rmse_deg"))°，均小于计算力矩控制的 #f2(ctc-nom.at("circle_orientation_rmse_deg"))° 和 #f2(ctc-nom.at("figure8_orientation_rmse_deg"))°。这表明当前增益整定更倾向于降低位置误差，计算力矩控制并未在所有位姿指标上全面优于 PD。
 
 标称场景中，PD 的末端 RMSE 为 #f2(pd-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(pd-nom.at("ee_max_mm")) mm；计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(ctc-nom.at("ee_max_mm")) mm。计算力矩控制将 RMSE 降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%，最大误差降低约 #reduction(pd-nom.at("ee_max_mm"), ctc-nom.at("ee_max_mm"))%，满足末端 RMSE 小于 5 mm 且相对 PD 降低 30% 的预设目标。
 

@@ -11,4 +11,8 @@ def test_shortened_contract_via_full_nominal_run() -> None:
     assert np.all(np.isfinite(log["q"]))
     assert log["time"].shape[0] == log["q"].shape[0]
     assert metrics["ee_rmse_mm"] >= 0.0
+    assert metrics["circle_ee_rmse_mm"] >= 0.0
+    assert metrics["figure8_ee_rmse_mm"] >= 0.0
+    assert metrics["circle_orientation_rmse_deg"] >= 0.0
+    assert metrics["figure8_orientation_rmse_deg"] >= 0.0
     assert metrics["peak_voltage_v"] <= 48.0 + 1e-8

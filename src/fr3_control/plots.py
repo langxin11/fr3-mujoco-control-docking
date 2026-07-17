@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scienceplots  # noqa: F401  # 导入时向 Matplotlib 注册 SciencePlots 样式。
 from matplotlib.ticker import MaxNLocator
+from mpl_toolkits.mplot3d.axes3d import Axes3D
 
 from .config import FIGURES_DIR, RESULTS_DIR, SIM
 
@@ -45,6 +46,41 @@ def _style() -> None:
     )
 
 
+def _draw_orientation_frames(
+    axis: Axes3D,
+    positions: np.ndarray,
+    rotations: np.ndarray,
+    *,
+    count: int = 8,
+    length: float = 0.022,
+) -> None:
+    """在参考轨迹上稀疏绘制末端三维姿态标架。
+
+    Args:
+        axis: 用于绘制轨迹的 Matplotlib 三维坐标轴。
+        positions: 参考末端位置序列，形状为 ``(n, 3)``。
+        rotations: 参考末端旋转矩阵序列，形状为 ``(n, 3, 3)``。
+        count: 每段轨迹上姿态标架的数量。
+        length: 每根坐标轴箭头的长度，单位为 m。
+    """
+    # 轨迹起终点重合，因此不重复绘制最后一个姿态标架。
+    indices = np.unique(np.linspace(0, positions.shape[0] - 2, count, dtype=int))
+    colors = ("#d62728", "#2ca02c", "#1f77b4")
+    for index in indices:
+        origin = positions[index]
+        rotation = rotations[index]
+        axis.scatter(*origin, color="#4a4a4a", s=5, depthshade=False)
+        for coordinate, color in enumerate(colors):
+            direction = length * rotation[:, coordinate]
+            axis.quiver(
+                *origin,
+                *direction,
+                color=color,
+                linewidth=0.9,
+                arrow_length_ratio=0.3,
+            )
+
+
 def generate_plots() -> list[str]:
     """生成轨迹、误差、关节响应和指标对比图。
 
@@ -59,29 +95,55 @@ def generate_plots() -> list[str]:
     ctc_dist = _load("ctc_disturbance")
     outputs: list[str] = []
 
-    fig = plt.figure(figsize=(6.8, 5.2))
-    axis = fig.add_subplot(111, projection="3d")
-    # 三维坐标面只保留少量主网格，避免 SciencePlots 次网格遮挡轨迹。
-    axis.minorticks_off()
-    for coordinate_axis in (axis.xaxis, axis.yaxis, axis.zaxis):
-        coordinate_axis.set_major_locator(MaxNLocator(nbins=5))
-    # 三轴使用相同物理尺度，避免将毫米级 x 误差视觉放大到圆轨迹直径大小。
-    reference_min = ctc_nom["ee_ref"].min(axis=0)
-    reference_max = ctc_nom["ee_ref"].max(axis=0)
-    center = 0.5 * (reference_min + reference_max)
-    half_span = 0.55 * np.max(reference_max - reference_min)
-    axis.set(
-        xlim=(center[0] - half_span, center[0] + half_span),
-        ylim=(center[1] - half_span, center[1] + half_span),
-        zlim=(center[2] - half_span, center[2] + half_span),
+    segments = (
+        ("圆轨迹", SIM.transition_end, SIM.circle_end, 20, -35),
+        ("$x$–$y$ 平面 8 字轨迹", SIM.figure8_start, SIM.figure8_end, 32, -55),
     )
-    axis.set_box_aspect((1, 1, 1))
-    axis.plot(*ctc_nom["ee_ref"].T, "k--", lw=2, label="期望轨迹")
-    axis.plot(*pd_nom["ee"].T, lw=1.3, label="PD")
-    axis.plot(*ctc_nom["ee"].T, lw=1.3, label="计算力矩")
-    axis.set(xlabel="x / m", ylabel="y / m", zlabel="z / m", title="末端空间轨迹")
-    axis.legend()
+    fig = plt.figure(figsize=(10.2, 4.8))
+    for plot_index, (title, start, end, elevation, azimuth) in enumerate(segments, start=1):
+        axis = fig.add_subplot(1, 2, plot_index, projection="3d")
+        mask = (ctc_nom["time"] >= start) & (ctc_nom["time"] <= end)
+        reference = ctc_nom["ee_ref"][mask]
+        # 三维坐标面只保留少量主网格，避免网格遮挡轨迹。
+        axis.minorticks_off()
+        for coordinate_axis in (axis.xaxis, axis.yaxis, axis.zaxis):
+            coordinate_axis.set_major_locator(MaxNLocator(nbins=4))
+        center = 0.5 * (reference.min(axis=0) + reference.max(axis=0))
+        half_span = 0.56 * np.max(np.ptp(reference, axis=0))
+        axis.set(
+            xlim=(center[0] - half_span, center[0] + half_span),
+            ylim=(center[1] - half_span, center[1] + half_span),
+            zlim=(center[2] - half_span, center[2] + half_span),
+        )
+        axis.set_box_aspect((1, 1, 1))
+        axis.view_init(elev=elevation, azim=azimuth)
+        axis.plot(*reference.T, "k--", lw=2, label="参考")
+        axis.plot(*pd_nom["ee"][mask].T, lw=1.3, label="PD")
+        axis.plot(*ctc_nom["ee"][mask].T, lw=1.3, label="计算力矩")
+        _draw_orientation_frames(axis, reference, ctc_nom["ee_rot_ref"][mask])
+        axis.set(xlabel="$x$ / m", ylabel="$y$ / m", zlabel="$z$ / m", title=title)
+        axis.legend(fontsize=8)
     path = FIGURES_DIR / "trajectory_3d.png"
+    fig.savefig(path)
+    plt.close(fig)
+    outputs.append(str(path))
+
+    fig, axes = plt.subplots(2, 2, figsize=(7.4, 6.3), sharex="row", layout="constrained")
+    for row, (title, start, end, _, _) in enumerate(segments):
+        for data, label in ((pd_nom, "PD"), (ctc_nom, "计算力矩")):
+            mask = (data["time"] >= start) & (data["time"] <= end)
+            local_time = data["time"][mask] - start
+            position_error = 1e3 * np.linalg.norm(data["ee_error"][mask], axis=1)
+            orientation_error = np.rad2deg(data["ee_orientation_error"][mask])
+            axes[row, 0].plot(local_time, position_error, label=label)
+            axes[row, 1].plot(local_time, orientation_error, label=label)
+        axes[row, 0].set(ylabel="位置误差 / mm", title=f"{title}：位置")
+        axes[row, 1].set(ylabel="姿态误差 / °", title=f"{title}：姿态")
+        axes[row, 0].legend()
+        axes[row, 1].legend()
+    axes[1, 0].set(xlabel="段内时间 / s")
+    axes[1, 1].set(xlabel="段内时间 / s")
+    path = FIGURES_DIR / "segment_tracking_error.png"
     fig.savefig(path)
     plt.close(fig)
     outputs.append(str(path))
