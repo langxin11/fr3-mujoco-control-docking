@@ -43,7 +43,7 @@ class PMSMConfig:
     # 将参考电机的转速常数 104 rpm/V 换算为 SI 制反电动势常数。
     back_emf_constant: float = (1.0 / 104.0) / (2.0 * np.pi / 60.0)
     rotor_inertia: float = 170e-7
-    pole_pairs: int = 7
+    pole_pairs: int = 8
     gear_ratio: np.ndarray = field(
         default_factory=lambda: np.array([100, 100, 100, 100, 50, 50, 50], dtype=float)
     )
@@ -73,6 +73,11 @@ class SimulationConfig:
         circle_end: 圆周跟踪段结束时刻，单位为 s。
         circle_radius: 末端圆轨迹半径，单位为 m。
         circle_frequency: 末端圆轨迹频率，单位为 Hz。
+        figure8_start: 平面 8 字轨迹开始时刻，单位为 s。
+        figure8_end: 平面 8 字轨迹结束时刻，单位为 s。
+        figure8_radius_x: 8 字轨迹的 x 向半宽，单位为 m。
+        figure8_radius_y: 8 字轨迹的 y 向半宽，单位为 m。
+        figure8_frequency: 8 字轨迹的基波频率，单位为 Hz。
         disturbance_start: 外力扰动开始时刻，单位为 s。
         disturbance_end: 外力扰动结束时刻，单位为 s。
         disturbance_force: 末端沿负 z 轴的扰动力大小，单位为 N。
@@ -81,11 +86,16 @@ class SimulationConfig:
 
     physics_dt: float = 5e-5
     control_dt: float = 1e-3
-    duration: float = 8.0
-    transition_end: float = 2.0
-    circle_end: float = 7.0
-    circle_radius: float = 0.08
+    duration: float = 14.0
+    transition_end: float = 1.5
+    circle_end: float = 6.5
+    circle_radius: float = 0.10
     circle_frequency: float = 0.2
+    figure8_start: float = 8.0
+    figure8_end: float = 13.0
+    figure8_radius_x: float = 0.10
+    figure8_radius_y: float = 0.07
+    figure8_frequency: float = 0.2
     disturbance_start: float = 4.5
     disturbance_end: float = 5.5
     disturbance_force: float = 15.0

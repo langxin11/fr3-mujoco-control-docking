@@ -8,6 +8,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from .actuator import PMSMDriveBank
 from .config import RESULTS_DIR, SIM
@@ -27,12 +28,15 @@ def _metrics(log: dict[str, np.ndarray], scenario: str) -> dict[str, float | str
         包含跟踪误差、执行器峰值、饱和率、能量和恢复时间的指标字典。
     """
     ee_norm = np.linalg.norm(log["ee_error"], axis=1)
+    orientation_error = log["ee_orientation_error"]
     joint_norm = np.linalg.norm(log["q_ref"] - log["q"], axis=1)
     metrics: dict[str, float | str] = {
         "controller": str(log["controller"]),
         "scenario": scenario,
         "ee_rmse_mm": float(1e3 * np.sqrt(np.mean(ee_norm**2))),
         "ee_max_mm": float(1e3 * np.max(ee_norm)),
+        "ee_orientation_rmse_deg": float(np.rad2deg(np.sqrt(np.mean(orientation_error**2)))),
+        "ee_orientation_max_deg": float(np.rad2deg(np.max(orientation_error))),
         "joint_rmse_deg": float(np.rad2deg(np.sqrt(np.mean(joint_norm**2 / 7.0)))),
         "peak_current_a": float(np.max(np.abs(log["current"]))),
         "peak_voltage_v": float(np.max(np.abs(log["voltage"]))),
@@ -79,6 +83,7 @@ def _save_run(log: dict[str, np.ndarray], metrics: dict[str, float | str], outpu
         "ee_y",
         "ee_z",
         "ee_error_norm",
+        "ee_orientation_error_deg",
     ]
     with output.with_suffix(".csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -92,6 +97,7 @@ def _save_run(log: dict[str, np.ndarray], metrics: dict[str, float | str], outpu
                     *log["ee_ref"][index],
                     *log["ee"][index],
                     np.linalg.norm(log["ee_error"][index]),
+                    np.rad2deg(log["ee_orientation_error"][index]),
                 ]
             )
 
@@ -136,10 +142,13 @@ def simulate(
         "qd_ref": reference.qd.copy(),
         "qdd_ref": reference.qdd.copy(),
         "ee_ref": reference.ee_position.copy(),
+        "ee_rot_ref": reference.ee_rotation.copy(),
         "q": np.zeros((count, 7)),
         "qd": np.zeros((count, 7)),
         "ee": np.zeros((count, 3)),
+        "ee_rotation": np.zeros((count, 3, 3)),
         "ee_error": np.zeros((count, 3)),
+        "ee_orientation_error": np.zeros(count),
         "desired_torque": np.zeros((count, 7)),
         "applied_torque": np.zeros((count, 7)),
         "current": np.zeros((count, 7)),
@@ -163,15 +172,22 @@ def simulate(
         is_control_tick = physics_step % control_stride == 0
         t = physics_step * SIM.physics_dt
         if is_control_tick:
-            q_ref, qd_ref, qdd_ref, target = reference.sample(control_index)
+            q_ref, qd_ref, qdd_ref, target, target_rotation = reference.sample(control_index)
             desired_torque = controller(model, data, ids, q_ref, qd_ref, qdd_ref)
             data.mocap_pos[ids.target_mocap] = target
-            position, _ = site_pose(data, ids.site)
+            target_quaternion = Rotation.from_matrix(target_rotation).as_quat()
+            data.mocap_quat[ids.target_mocap] = target_quaternion[[3, 0, 1, 2]]
+            position, rotation = site_pose(data, ids.site)
             # 在本控制周期积分前记录状态；执行器量对应上一物理子步的输出。
             log["q"][control_index] = data.qpos[ids.joint_qpos]
             log["qd"][control_index] = data.qvel[ids.joint_dof]
             log["ee"][control_index] = position
+            log["ee_rotation"][control_index] = rotation
             log["ee_error"][control_index] = target - position
+            rotation_error = target_rotation @ rotation.T
+            log["ee_orientation_error"][control_index] = np.arccos(
+                np.clip((np.trace(rotation_error) - 1.0) / 2.0, -1.0, 1.0)
+            )
             log["desired_torque"][control_index] = desired_torque
             log["applied_torque"][control_index] = applied_torque
             log["current"][control_index] = motor.current

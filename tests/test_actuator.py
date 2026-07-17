@@ -10,7 +10,7 @@ def test_motor_parameter_units() -> None:
     """验证数据手册参数完成了正确的 SI 单位换算。"""
     assert np.isclose(PMSM.rotor_inertia, 1.7e-5)
     assert np.isclose(PMSM.back_emf_constant, PMSM.torque_constant, rtol=0.01)
-    assert PMSM.pole_pairs == 7
+    assert PMSM.pole_pairs == 8
 
 
 def test_torque_mapping_and_limits() -> None:
