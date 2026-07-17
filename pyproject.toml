@@ -1,0 +1,43 @@
+[project]
+name = "fr3-final-project"
+version = "0.1.0"
+description = "7-DOF Franka Research 3 inverse-dynamics trajectory tracking final project"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "imageio>=2.36",
+  "imageio-ffmpeg>=0.6.0",
+  "matplotlib>=3.10.0",
+  "mujoco>=3.3.0,<4",
+  "numpy>=2.1,<3",
+  "pillow>=11.0",
+  "scienceplots>=2.2,<3",
+  "scipy>=1.14",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.11",
+]
+
+[project.scripts]
+fr3-control = "fr3_control.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fr3_control"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

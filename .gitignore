@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+results/*.npz
+results/*.csv
+results/*.json
+figures/*.png
+video/*.mp4
+report/*.pdf
+dist/*.zip
+tools/typst
