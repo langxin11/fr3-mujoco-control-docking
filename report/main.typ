@@ -69,27 +69,11 @@
 == 系统架构
 
 #figure(
-  block(fill: luma(96%), stroke: 0.6pt, inset: 10pt, radius: 3pt)[
-    #align(center)[
-      #grid(columns: (1.8fr, 0.25fr, 1.8fr, 0.25fr, 1.8fr), gutter: 5pt,
-        block(fill: rgb("dbeafe"), inset: 8pt)[期望末端组合位姿轨迹\冗余逆运动学],
-        align(horizon)[→],
-        block(fill: rgb("dcfce7"), inset: 8pt)[PD / 计算力矩\期望关节力矩],
-        align(horizon)[→],
-        block(fill: rgb("ffedd5"), inset: 8pt)[FOC 电流 PI、PMSM\减速器与限幅],
-      )
-      #v(0.3cm)
-      #grid(columns: (2fr, 0.25fr, 2fr), gutter: 5pt,
-        block(fill: rgb("f3e8ff"), inset: 8pt)[MuJoCo 七自由度多刚体动力学\外力扰动],
-        align(horizon)[→],
-        block(fill: rgb("fce7f3"), inset: 8pt)[关节与末端状态反馈\误差和能量统计],
-      )
-    ]
-  ],
+  image("../figures/system_architecture.svg", width: 100%),
   caption: [机械臂运动控制系统总体结构],
 )
 
-控制系统按照"期望轨迹 → 控制器 → 执行器 → 被控对象 → 状态反馈"的闭环回路组织。蓝色模块对应第 3 章运动学规划，绿色模块对应第 5 章控制器设计，橙/紫色模块共同对应第 4 章被控对象建模。
+控制系统按照“参考生成 → 运动控制 → 驱动传动 → 被控对象 → 状态反馈”的闭环回路组织。图中显式区分参考关节轨迹 $(q^d, dot(q)^d, dot.double(q)^d)$、期望/实际关节力矩 $(tau^d, tau)$、状态测量 $z$ 和外部扰动 $F_"ext"$；虚线反馈通道将关节、末端及接触状态送回控制器。
 
 == 多速率控制时序
 
