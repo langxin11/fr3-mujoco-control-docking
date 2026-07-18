@@ -3,6 +3,7 @@
 本项目是“机器人系统设计与应用”高阶期末作业。它使用 MuJoCo Menagerie 的 Franka
 Research 3 v2 模型，在 PMSM 磁场定向电流环与减速器约束下比较重力/偏置补偿 PD 和
 计算力矩控制，任务为末端竖直圆与 x--y 平面 8 字组合位姿轨迹跟踪，并包含 15 N 外力抗扰实验。
+此外，项目提供独立的 FR3 柔顺对接场景，对比刚性 CTC 与操作空间阻抗控制在接触峰值、保持力和柔顺位姿偏差上的权衡。
 
 ## 快速开始
 
@@ -11,6 +12,9 @@ uv sync --all-groups
 uv run fr3-control run-experiments
 uv run fr3-control plot-results
 MUJOCO_GL=egl uv run fr3-control render-video
+uv run fr3-control run-docking-experiments
+uv run fr3-control plot-docking-results
+MUJOCO_GL=egl uv run fr3-control render-docking-video
 uv run pytest
 ```
 
@@ -18,6 +22,7 @@ uv run pytest
 
 ```bash
 uv run fr3-control simulate --controller ctc --scenario disturbance
+uv run fr3-control simulate-docking --controller impedance
 ```
 
 ## 输出
@@ -25,6 +30,7 @@ uv run fr3-control simulate --controller ctc --scenario disturbance
 - `results/`：四组实验的 NPZ、CSV 和 JSON 指标。
 - `figures/`：报告使用的结果图。
 - `video/fr3_control_demo.mp4`：演示视频。
+- `video/fr3_compliant_docking.mp4`：刚性 CTC 与阻抗控制的柔顺对接视频。
 - `report/main.typ` 与 `report/期末作业报告.pdf`：报告源文件和 PDF。
 
 报告中的姓名和学号已经填写；余老师知识点仍使用显式占位符，提交前必须替换。
@@ -34,6 +40,10 @@ uv run fr3-control simulate --controller ctc --scenario disturbance
 `assets/franka_fr3_v2` 来自 Google DeepMind 的
 [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie)，其原始许可证保留在
 模型目录中。模型的位置执行器被替换为受 FR3 官方关节转矩限制约束的力矩执行器。
+
+柔顺对接使用 `assets/franka_fr3_v2/scene_docking.xml`，其中的对接件 STL 已获作者授权，来源、
+用途与接触简化假设记录在 `THIRD_PARTY_NOTICES.md`。STL 负责外观显示；为稳定复现法向接触力，
+仿真以与端面尺寸匹配的圆柱代理作为碰撞几何，因而该实验验证的是柔顺接触/保持，不代表完整机械锁止结构的有限元或公差级复现。
 
 ## 执行器模型边界
 

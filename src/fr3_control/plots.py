@@ -13,7 +13,7 @@ import scienceplots  # noqa: F401  # 导入时向 Matplotlib 注册 SciencePlots
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.mplot3d.axes3d import Axes3D
 
-from .config import FIGURES_DIR, RESULTS_DIR, SIM
+from .config import DOCKING, FIGURES_DIR, RESULTS_DIR, SIM
 
 
 def _load(name: str) -> dict[str, np.ndarray]:
@@ -190,6 +190,55 @@ def generate_plots() -> list[str]:
     axis.bar_label(bars, fmt="%.2f")
     axis.set(ylabel="末端 RMSE / mm", title="控制器量化对比")
     path = FIGURES_DIR / "metrics_comparison.png"
+    fig.savefig(path)
+    plt.close(fig)
+    outputs.append(str(path))
+    return outputs
+
+
+def generate_docking_plots() -> list[str]:
+    """生成柔顺对接的接触力、位姿偏差和量化对比图。"""
+    _style()
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ctc = _load("docking_ctc")
+    impedance = _load("docking_impedance")
+    outputs: list[str] = []
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.2, 5.8), sharex=True)
+    for data, label in ((ctc, "刚性 CTC"), (impedance, "阻抗控制")):
+        contact_force = np.linalg.norm(data["contact_wrench"][:, :3], axis=1)
+        position_error = 1e3 * np.linalg.norm(data["ee_error"], axis=1)
+        axes[0].plot(data["time"], contact_force, label=label)
+        axes[1].plot(data["time"], position_error, label=label)
+    axes[0].axhline(DOCKING.contact_hold_force, color="#4a4a4a", ls="--", lw=1, label="阻抗目标力")
+    axes[0].set(ylabel="接触力 / N", title="对接过程接触力")
+    axes[1].set(xlabel="时间 / s", ylabel="末端偏差 / mm", title="对接位姿偏差")
+    for axis in axes:
+        axis.axvspan(DOCKING.insertion_end, DOCKING.duration, color="#72b7b2", alpha=0.12)
+        axis.legend()
+    path = FIGURES_DIR / "docking_contact_response.png"
+    fig.savefig(path)
+    plt.close(fig)
+    outputs.append(str(path))
+
+    summaries = json.loads((RESULTS_DIR / "docking_summary.json").read_text(encoding="utf-8"))
+    labels = ["刚性 CTC", "阻抗控制"]
+    peak = [item["peak_contact_force_n"] for item in summaries]
+    steady = [item["steady_contact_force_n"] for item in summaries]
+    final_error = [item["ee_final_mm"] for item in summaries]
+    x = np.arange(len(labels))
+    width = 0.36
+    fig, axes = plt.subplots(1, 2, figsize=(7.3, 3.5), layout="constrained")
+    peak_bars = axes[0].bar(x - width / 2, peak, width, label="峰值")
+    steady_bars = axes[0].bar(x + width / 2, steady, width, label="保持段均值")
+    axes[0].bar_label(peak_bars, fmt="%.2f", fontsize=8)
+    axes[0].bar_label(steady_bars, fmt="%.2f", fontsize=8)
+    axes[0].set(xticks=x, xticklabels=labels, ylabel="接触力 / N", title="接触力对比")
+    axes[0].legend(fontsize=8)
+    error_bars = axes[1].bar(labels, final_error, color=["#4c78a8", "#72b7b2"])
+    axes[1].bar_label(error_bars, fmt="%.2f", fontsize=8)
+    axes[1].set(ylabel="最终位置偏差 / mm", title="柔顺偏差")
+    path = FIGURES_DIR / "docking_metrics.png"
     fig.savefig(path)
     plt.close(fig)
     outputs.append(str(path))

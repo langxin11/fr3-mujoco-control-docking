@@ -22,6 +22,9 @@
 #let pd-dis = metrics.at(1)
 #let ctc-nom = metrics.at(2)
 #let ctc-dis = metrics.at(3)
+#let docking-metrics = json("../results/docking_summary.json")
+#let docking-ctc = docking-metrics.at(0)
+#let docking-impedance = docking-metrics.at(1)
 #let f2(x) = str(calc.round(x, digits: 2))
 #let reduction(before, after) = f2(100 * (before - after) / before)
 
@@ -57,7 +60,7 @@
 
 项目使用 Google DeepMind 维护的 MuJoCo Menagerie `franka_fr3_v2` 模型 @menagerie2022。该模型由 Franka 公开的 FR3 URDF 生成，保留了连杆惯性、几何与关节约束；FR3 厂商资料给出的额定负载为 3 kg、最大臂展为 855 mm，七轴均配置连杆侧力矩传感器 @franka2024fr3。MuJoCo 作为统一正向动力学仿真器的核心方法见 @todorov2012mujoco。所有控制、绘图和视频程序均使用 Python 编写。
 
-本报告的主要工作包括：建立了 FR3 七自由度刚体、PMSM/FOC 工程等效驱动器和减速器的统一闭环模型，并严格区分了厂商公开的技术参数与工程假设；通过阻尼伪逆和零空间优化生成了连续的冗余关节轨迹；在相同执行器约束下定量比较了 PD 与计算力矩控制的跟踪精度与抗扰性能。全部实验代码提供统一命令行接口，可一条命令复现四组实验、图表和视频。
+本报告的主要工作包括：建立了 FR3 七自由度刚体、PMSM/FOC 工程等效驱动器和减速器的统一闭环模型，并严格区分了厂商公开的技术参数与工程假设；通过阻尼伪逆和零空间优化生成了连续的冗余关节轨迹；在相同执行器约束下定量比较了 PD 与计算力矩控制的跟踪精度与抗扰性能；进一步引入操作空间阻抗控制和受授权对接件外观，构造刚性 CTC 与柔顺接触的对接比较实验。全部实验代码提供统一命令行接口，可一条命令复现实验、图表和视频。
 
 = 系统总体方案
 
@@ -184,6 +187,14 @@ $ dot.double(e)+K_d dot(e)+K_p e=0. $
 
 按二阶标准形式设置 $K_p=omega_n^2 I$、$K_d=2 zeta omega_n I$。在 $omega_n in {12,15,18,22,28}$ 的确定性网格中，综合末端 RMSE、最大误差和饱和率，最终选择 $omega_n=18 "rad"/s$、$zeta=1$。更高带宽可继续降低理想跟踪误差，但会推高峰值电流并增大模型不确定性敏感度。
 
+== 操作空间阻抗控制
+
+柔顺对接采用六维操作空间阻抗关系 @hogan1985impedance：
+
+$ M_d (dot.double(x)-dot.double(x)_d)+D_d (dot(x)-dot(x)_d)+K_d (x-x_d)=F_"ext"-F_d. $
+
+其中 $x$ 同时包含末端位置和旋转向量，$F_"ext"$ 为 MuJoCo 接触对计算得到、转换到世界坐标系的工具受力/力矩，$F_d$ 为接触锁定后沿插入反方向的 2 N 期望保持力。控制器利用实时质量矩阵和雅可比构造操作空间惯性 $Lambda=(J M^(-1)J^T+lambda_o^2 I)^(-1)$，再以 $tau=J^T Lambda a_"cmd"+h+N^T tau_0$ 输出关节转矩；$tau_0$ 为回中零空间阻尼项。平动虚拟质量、刚度和阻尼分别取 10 kg、100 N/m 和 50 N·s/m，转动三轴分别取 1 kg、25 N·m/rad 和 10 N·m·s/rad。较低的刚度允许接触后出现受控位置偏差，以换取较小的冲击力。
+
 == 比较框架
 
 两种控制器使用完全相同的参考轨迹、初始状态、物理步长、电机参数、减速器参数和电压/电流限制。控制器输出期望关节力矩，实际力矩必须经过电流动态和减速器后作用于 MuJoCo 模型——该约束避免了"理想力矩源"假设掩盖执行器带宽的实际情况。以下实验将在这套统一框架下评估两种控制器的性能差异。
@@ -271,11 +282,48 @@ PD 的关节 RMSE 略小于计算力矩控制，这并不与末端精度结论�
 
 标称场景下计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm；抗扰场景下为 #f2(ctc-dis.at("ee_rmse_mm")) mm，撤力后 #f2(ctc-dis.at("recovery_s")) s 内恢复至 10 mm 以内，均满足预设指标。PD 未发生饱和，计算力矩控制的瞬时饱和占比小于 0.01%，因此性能差异主要来自控制策略本身的补偿能力，而非执行器容量限制。
 
+= 柔顺对接扩展实验
+
+== 场景与评价方法
+
+在不改变上述组合轨迹实验的前提下，另建独立的 `scene_docking.xml`。末端和固定端均显示经原作者授权的对接件网格 @langxin2026docking；由于该网格的多点键槽接触会使离散接触对频繁切换，碰撞层使用半径 22 mm、半高 3 mm 的端面圆柱代理，外观仍保留原网格。该简化用于稳定地评估法向接触和保持力，不宣称复刻完整锁止机构的细节、公差和材料变形。
+
+对接总时长为 11 s：0--1 s 保持初始位姿，1--5 s 沿工具坐标系 z 轴靠近，5--7 s 从 55 mm 端面间距受控插入至 45 mm，7--11 s 保持。接触首次出现后，期望保持力在 0.4 s 内按五次时间缩放升至 2 N。评价峰值/保持段接触力、最终位姿偏差、接触起始时刻和保持段接触比例；保持段接触比例不低于 90% 视为完成对接。
+
+== 接触结果与讨论
+
+#figure(
+  image("../figures/docking_contact_response.png", width: 92%),
+  caption: [刚性 CTC 与操作空间阻抗控制的接触力和末端偏差；浅绿色区域为保持段],
+)
+
+#figure(
+  image("../figures/docking_metrics.png", width: 92%),
+  caption: [柔顺对接的接触力与最终位置偏差量化对比],
+)
+
+#figure(
+  table(
+    columns: (2.0cm, 2.1cm, 2.3cm, 2.3cm, 2.3cm, 2.3cm),
+    stroke: 0.5pt,
+    inset: 5pt,
+    align: center,
+    table.header([控制器], [接触时刻/s], [峰值力/N], [保持力/N], [最终偏差/mm], [保持接触/%]),
+    [刚性 CTC], [#f2(docking-ctc.at("contact_start_s"))], [#f2(docking-ctc.at("peak_contact_force_n"))], [#f2(docking-ctc.at("steady_contact_force_n"))], [#f2(docking-ctc.at("ee_final_mm"))], [#f2(docking-ctc.at("hold_contact_percent"))],
+    [阻抗控制], [#f2(docking-impedance.at("contact_start_s"))], [#f2(docking-impedance.at("peak_contact_force_n"))], [#f2(docking-impedance.at("steady_contact_force_n"))], [#f2(docking-impedance.at("ee_final_mm"))], [#f2(docking-impedance.at("hold_contact_percent"))],
+  ),
+  caption: [柔顺对接量化指标],
+)
+
+两种控制器均在保持段维持 100% 接触，因此均通过配置的完成判据。刚性 CTC 的接触始于 #f2(docking-ctc.at("contact_start_s")) s，峰值接触力为 #f2(docking-ctc.at("peak_contact_force_n")) N，保持段均值为 #f2(docking-ctc.at("steady_contact_force_n")) N；阻抗控制在 #f2(docking-impedance.at("contact_start_s")) s 首次接触，峰值和保持段均值分别为 #f2(docking-impedance.at("peak_contact_force_n")) N 与 #f2(docking-impedance.at("steady_contact_force_n")) N。相对刚性 CTC，阻抗控制将峰值接触力降低约 #reduction(docking-ctc.at("peak_contact_force_n"), docking-impedance.at("peak_contact_force_n"))%，并将保持段压紧力降低约 #reduction(docking-ctc.at("steady_contact_force_n"), docking-impedance.at("steady_contact_force_n"))%。
+
+代价是阻抗控制的最终位置偏差为 #f2(docking-impedance.at("ee_final_mm")) mm，高于刚性 CTC 的 #f2(docking-ctc.at("ee_final_mm")) mm。这不是跟踪失效：在有意设定的小虚拟刚度下，偏差正是吸收接触过量和限制压紧力的柔顺位移。该结果说明对接任务不能只以末端位置误差排序；若对接件或环境脆弱，较小峰值接触力和稳定保持通常比刚性贴合更关键。
+
 = 结论与展望
 
 本报告完成了一个七自由度 FR3 机械臂的高阶运动控制仿真。系统沿"期望轨迹 → 控制器 → 执行器链 → 多刚体动力学 → 状态反馈"的闭环信号路径逐层建模，包含 PMSM q 轴电感、电阻、反电动势、FOC 电流 PI、电压/电流限制、转子惯量、减速器效率和 FR3 官方关节转矩限制，并非简化为理想关节力矩源。通过冗余逆运动学生成连续参考轨迹，在相同执行器约束下比较了偏置力补偿 PD 与计算力矩控制，并严格区分了 FR3 官方整机限制、Menagerie 刚体数据和代表性 PMSM 工程假设。
 
-实验表明，计算力矩控制在标称组合位姿轨迹下取得 #f2(ctc-nom.at("ee_rmse_mm")) mm 末端位置 RMSE，比 PD 降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%；在 15 N 外力下取得 #f2(ctc-dis.at("ee_rmse_mm")) mm RMSE，比 PD 降低约 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%，撤力后恢复时间约 #f2(ctc-dis.at("recovery_s")) s。结果表明，对于多轴耦合显著的冗余机械臂，利用质量矩阵和动力学偏置项进行前馈补偿能够显著改善任务空间跟踪精度与抗扰恢复性能。
+实验表明，计算力矩控制在标称组合位姿轨迹下取得 #f2(ctc-nom.at("ee_rmse_mm")) mm 末端位置 RMSE，比 PD 降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%；在 15 N 外力下取得 #f2(ctc-dis.at("ee_rmse_mm")) mm RMSE，比 PD 降低约 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%，撤力后恢复时间约 #f2(ctc-dis.at("recovery_s")) s。结果表明，对于多轴耦合显著的冗余机械臂，利用质量矩阵和动力学偏置项进行前馈补偿能够显著改善任务空间跟踪精度与抗扰恢复性能。独立柔顺对接实验进一步显示，操作空间阻抗控制以可接受的末端让位换取更低的峰值和保持接触力；这为接触敏感任务提供了与刚性轨迹跟踪不同的控制取舍。
 
 后续工作可沿以下方向推进：引入连杆质量和负载的不确定性，考察鲁棒或自适应计算力矩控制的效果；在零空间中纳入可操作度最大化与碰撞约束；将离线逆运动学替换为在线优化控制，在统一框架中同时处理轨迹生成、关节限位、电流约束和障碍物规避。
 
@@ -286,6 +334,9 @@ PD 的关节 RMSE 略小于计算力矩控制，这并不与末端精度结论�
 - `uv run fr3-control run-experiments`：生成四组实验的 NPZ、CSV 和 JSON 数据；
 - `uv run fr3-control plot-results`：生成报告插图；
 - `MUJOCO_GL=egl uv run fr3-control render-video`：渲染演示视频（需要 EGL 支持）；
+- `uv run fr3-control run-docking-experiments`：运行刚性 CTC 与阻抗控制的柔顺对接实验；
+- `uv run fr3-control plot-docking-results`：生成对接接触力与偏差图；
+- `MUJOCO_GL=egl uv run fr3-control render-docking-video`：渲染柔顺对接对比视频；
 - `uv run pytest`：验证电机单位换算、限幅、质量矩阵、轨迹连续性和完整闭环仿真。
 
 所有实验使用固定参数和确定性初始状态。报告中的数值直接从 `results/summary.json` 读取，重新运行实验并编译 Typst 后可自动更新。

@@ -6,8 +6,10 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-from .model import ModelIds, mass_matrix
+from .config import DOCKING, SIM
+from .model import ModelIds, mass_matrix, site_jacobian, site_pose
 
 
 @dataclass(frozen=True)
@@ -109,3 +111,48 @@ def bias_compensated_pd(
 
 
 CONTROLLERS = {"ctc": computed_torque, "pd": bias_compensated_pd}
+
+
+def task_space_impedance(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    ids: ModelIds,
+    target_position: np.ndarray,
+    target_rotation: np.ndarray,
+    target_twist: np.ndarray,
+    target_acceleration: np.ndarray,
+    external_wrench: np.ndarray,
+) -> np.ndarray:
+    """计算带外力反馈与零空间姿态保持的六维操作空间阻抗转矩。
+
+    阻抗关系为 ``M_d (xdd-xdd_d)+D_d (xd-xd_d)+K_d (x-x_d)=F_ext``。
+    在 MuJoCo 的实时质量矩阵和雅可比上构造操作空间惯性，从而将期望
+    任务加速度映射为关节转矩。外力为世界坐标系下的工具接触力/力矩。
+    """
+    position, rotation = site_pose(data, ids.site)
+    jacobian = site_jacobian(model, data, ids.site, ids.joint_dof)
+    qd = data.qvel[ids.joint_dof]
+    current_twist = jacobian @ qd
+    pose_error = np.r_[
+        target_position - position,
+        Rotation.from_matrix(target_rotation @ rotation.T).as_rotvec(),
+    ]
+    velocity_error = target_twist - current_twist
+    virtual_mass = DOCKING.virtual_mass
+    commanded_acceleration = (
+        target_acceleration
+        + (external_wrench + DOCKING.stiffness * pose_error + DOCKING.damping * velocity_error)
+        / virtual_mass
+    )
+    matrix = mass_matrix(model, data, ids.joint_dof)
+    inverse_mass_jacobian_t = np.linalg.solve(matrix, jacobian.T)
+    operational_inverse = jacobian @ inverse_mass_jacobian_t
+    operational_inertia = np.linalg.inv(
+        operational_inverse + DOCKING.operational_damping**2 * np.eye(6)
+    )
+    task_wrench = operational_inertia @ commanded_acceleration
+    dynamically_consistent_inverse = inverse_mass_jacobian_t @ operational_inertia
+    nullspace = np.eye(7) - dynamically_consistent_inverse @ jacobian
+    q = data.qpos[ids.joint_qpos]
+    posture_torque = DOCKING.nullspace_stiffness * (SIM.home_q - q) - DOCKING.nullspace_damping * qd
+    return jacobian.T @ task_wrench + data.qfrc_bias[ids.joint_dof] + nullspace.T @ posture_torque

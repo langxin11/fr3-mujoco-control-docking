@@ -9,6 +9,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = ROOT / "assets" / "franka_fr3_v2" / "scene.xml"
+DOCKING_MODEL_PATH = ROOT / "assets" / "franka_fr3_v2" / "scene_docking.xml"
 RESULTS_DIR = ROOT / "results"
 FIGURES_DIR = ROOT / "figures"
 VIDEO_DIR = ROOT / "video"
@@ -104,7 +105,41 @@ class SimulationConfig:
     )
 
 
+@dataclass(frozen=True)
+class DockingConfig:
+    """FR3 柔顺对接实验的场景、轨迹和阻抗参数。
+
+    母端在每次复位时按 ``start_distance`` 沿工具局部 z 轴自动放置，
+    由此保证同一套参数可随 FR3 初始位姿一起变化。参考轨迹先保持，
+    再靠近至接触距离，随后以小过盈继续插入并保持。
+    """
+
+    duration: float = 11.0
+    settle_end: float = 1.0
+    approach_end: float = 5.0
+    insertion_end: float = 7.0
+    start_distance: float = 0.160
+    # STL 经 MuJoCo 规范化后的对接面在工具标记点相距约 65 mm 时开始接触。
+    contact_distance: float = 0.055
+    insertion_distance: float = 0.045
+    contact_hold_force: float = 2.0
+    contact_force_ramp_s: float = 0.4
+    virtual_mass: np.ndarray = field(
+        default_factory=lambda: np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0], dtype=float)
+    )
+    stiffness: np.ndarray = field(
+        default_factory=lambda: np.array([100.0, 100.0, 100.0, 25.0, 25.0, 25.0], dtype=float)
+    )
+    damping: np.ndarray = field(
+        default_factory=lambda: np.array([50.0, 50.0, 50.0, 10.0, 10.0, 10.0], dtype=float)
+    )
+    nullspace_stiffness: float = 4.0
+    nullspace_damping: float = 2.5
+    operational_damping: float = 2e-4
+
+
 PMSM = PMSMConfig()
 SIM = SimulationConfig()
+DOCKING = DockingConfig()
 JOINT_NAMES = tuple(f"fr3v2_joint{i}" for i in range(1, 8))
 ACTUATOR_NAMES = tuple(f"actuator{i}" for i in range(1, 8))

@@ -9,8 +9,15 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation
 
-from .config import JOINT_NAMES, SIM
-from .model import ModelIds, reset_home, site_jacobian, site_pose
+from .config import DOCKING, JOINT_NAMES, SIM
+from .model import (
+    DockingModelIds,
+    ModelIds,
+    reset_docking_home,
+    reset_home,
+    site_jacobian,
+    site_pose,
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,8 @@ class ReferenceTrajectory:
     qdd: np.ndarray
     ee_position: np.ndarray
     ee_rotation: np.ndarray
+    ee_twist: np.ndarray
+    ee_acceleration: np.ndarray
 
     def sample(
         self, index: int
@@ -51,6 +60,17 @@ class ReferenceTrajectory:
             self.ee_position[index],
             self.ee_rotation[index],
         )
+
+
+def _task_derivatives(
+    time: np.ndarray, positions: np.ndarray, rotations: np.ndarray, home_rotation: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """从离散任务位姿生成世界坐标系近似速度和加速度。"""
+    linear_velocity = np.gradient(positions, time, axis=0, edge_order=2)
+    relative_rotation = Rotation.from_matrix(rotations @ home_rotation.T)
+    angular_velocity = np.gradient(relative_rotation.as_rotvec(), time, axis=0, edge_order=2)
+    twist = np.hstack((linear_velocity, angular_velocity))
+    return twist, np.gradient(twist, time, axis=0, edge_order=2)
 
 
 def _quintic(u: float) -> float:
@@ -240,6 +260,7 @@ def build_reference(
         [np.interp(time, coarse_time, rotation_vectors[:, axis]) for axis in range(3)]
     )
     ee_rotation = Rotation.from_rotvec(interpolated_vectors).as_matrix() @ home_rotation
+    ee_twist, ee_acceleration = _task_derivatives(time, ee_ref, ee_rotation, home_rotation)
     return ReferenceTrajectory(
         time=time,
         q=q_ref,
@@ -247,4 +268,64 @@ def build_reference(
         qdd=qdd_ref,
         ee_position=ee_ref,
         ee_rotation=ee_rotation,
+        ee_twist=ee_twist,
+        ee_acceleration=ee_acceleration,
+    )
+
+
+def docking_task_position(
+    t: float, socket_position: np.ndarray, approach_axis: np.ndarray
+) -> np.ndarray:
+    """生成保持、靠近、插入和保持四阶段的对接位置参考。"""
+    if t <= DOCKING.settle_end:
+        distance = DOCKING.start_distance
+    elif t <= DOCKING.approach_end:
+        u = (t - DOCKING.settle_end) / (DOCKING.approach_end - DOCKING.settle_end)
+        distance = DOCKING.start_distance + _quintic(u) * (
+            DOCKING.contact_distance - DOCKING.start_distance
+        )
+    elif t <= DOCKING.insertion_end:
+        u = (t - DOCKING.approach_end) / (DOCKING.insertion_end - DOCKING.approach_end)
+        distance = DOCKING.contact_distance + _quintic(u) * (
+            DOCKING.insertion_distance - DOCKING.contact_distance
+        )
+    else:
+        distance = DOCKING.insertion_distance
+    return socket_position - distance * approach_axis
+
+
+def build_docking_reference(
+    model: mujoco.MjModel, ids: DockingModelIds, *, coarse_dt: float = 0.01
+) -> ReferenceTrajectory:
+    """生成与固定母端对齐的 FR3 柔顺对接位姿和关节参考轨迹。"""
+    data = mujoco.MjData(model)
+    home_position, home_rotation, socket_position, _ = reset_docking_home(model, data, ids)
+    approach_axis = home_rotation[:, 2]
+    coarse_time = np.arange(0.0, DOCKING.duration + coarse_dt / 2, coarse_dt)
+    q_coarse = np.empty((coarse_time.size, 7))
+    task_coarse = np.empty((coarse_time.size, 3))
+    q = SIM.home_q.copy()
+    for index, time_value in enumerate(coarse_time):
+        desired = docking_task_position(float(time_value), socket_position, approach_axis)
+        q = _solve_pose_ik(model, data, ids, q, desired, home_rotation)
+        q_coarse[index] = q
+        task_coarse[index] = desired
+
+    time = np.arange(0.0, DOCKING.duration + SIM.control_dt / 2, SIM.control_dt)
+    spline = CubicSpline(coarse_time, q_coarse, axis=0, bc_type="clamped")
+    q_ref = spline(time)
+    ee_position = np.column_stack(
+        [np.interp(time, coarse_time, task_coarse[:, axis]) for axis in range(3)]
+    )
+    ee_rotation = np.repeat(home_rotation[None, :, :], time.size, axis=0)
+    ee_twist, ee_acceleration = _task_derivatives(time, ee_position, ee_rotation, home_rotation)
+    return ReferenceTrajectory(
+        time=time,
+        q=q_ref,
+        qd=spline(time, 1),
+        qdd=spline(time, 2),
+        ee_position=ee_position,
+        ee_rotation=ee_rotation,
+        ee_twist=ee_twist,
+        ee_acceleration=ee_acceleration,
     )

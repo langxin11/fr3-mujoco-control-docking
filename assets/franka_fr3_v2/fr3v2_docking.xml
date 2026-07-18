@@ -1,0 +1,182 @@
+<mujoco model="fr3v2">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <default>
+    <default class="fr3v2">
+      <joint damping="0.21" frictionloss="1.137"/>
+      <default class="visual">
+        <geom type="mesh" group="2" contype="0" conaffinity="0"/>
+      </default>
+      <default class="collision">
+        <geom type="mesh" group="3" mass="0" density="0"/>
+      </default>
+      <site size="0.001" rgba="0.5 0.5 0.5 0.3" group="4"/>
+    </default>
+  </default>
+
+  <asset>
+    <material name="black" rgba=".2 .2 .2 1"/>
+    <material name="white" rgba="1 1 1 1"/>
+    <material name="red" rgba="1 0.072272 0.039546 1"/>
+    <material name="gray" rgba="0.863156 0.863156 0.863157 1"/>
+    <material name="button_green" rgba="0.102241 0.571125 0.102242 1"/>
+    <material name="button_red" rgba="0.520996 0.008023 0.013702 1"/>
+    <material name="button_blue" rgba="0.024157 0.445201 0.737911 1"/>
+    <material name="docking_metal" rgba="0.38 0.40 0.44 1" specular="0.7" shininess="0.55"/>
+
+    <mesh file="link0_0.obj"/>
+    <mesh file="link0_1.obj"/>
+    <mesh file="link0_2.obj"/>
+    <mesh file="link0_3.obj"/>
+    <mesh file="link0_4.obj"/>
+    <mesh file="link0_5.obj"/>
+    <mesh file="link1_3.obj"/>
+    <mesh file="link2_3.obj"/>
+    <mesh file="link3_3.obj"/>
+    <mesh file="link4_3.obj"/>
+    <mesh file="link5_3.obj"/>
+    <mesh file="link5_4.obj"/>
+    <mesh file="link6_0.obj"/>
+    <mesh file="link6_1.obj"/>
+    <mesh file="link6_2.obj"/>
+    <mesh file="link6_3.obj"/>
+    <mesh file="link6_4.obj"/>
+    <mesh file="link6_5.obj"/>
+    <mesh file="link6_6.obj"/>
+    <mesh file="link6_7.obj"/>
+    <mesh file="link6_8.obj"/>
+    <mesh file="link6_9.obj"/>
+    <mesh file="link7_0.obj"/>
+    <mesh file="link7_1.obj"/>
+    <mesh file="link7_2.obj"/>
+    <mesh file="link7_3.obj"/>
+    <mesh file="link7_4.obj"/>
+    <mesh file="link7_5.obj"/>
+    <mesh file="link7_6.obj"/>
+
+    <mesh name="link0_coll" file="link0.stl"/>
+    <mesh name="link1_coll" file="link1.stl"/>
+    <mesh name="link2_coll" file="link2.stl"/>
+    <mesh name="link3_coll" file="link3.stl"/>
+    <mesh name="link4_coll" file="link4.stl"/>
+    <mesh name="link5_coll" file="link5.stl"/>
+    <mesh name="link6_coll" file="link6.stl"/>
+    <mesh name="link7_coll" file="link7.stl"/>
+    <!-- 经授权复用的对接件网格；资产说明见仓库根目录 THIRD_PARTY_NOTICES.md。 -->
+    <mesh name="docking_part" file="../../docking/dock_1_17_new.STL"/>
+  </asset>
+
+  <worldbody>
+    <body name="base" childclass="fr3v2">
+      <body name="fr3v2_link0">
+        <geom mesh="link0_0" material="black" class="visual"/>
+        <geom mesh="link0_1" material="white" class="visual"/>
+        <geom mesh="link0_2" material="white" class="visual"/>
+        <geom mesh="link0_3" material="white" class="visual"/>
+        <geom mesh="link0_4" material="white" class="visual"/>
+        <geom mesh="link0_5" material="red" class="visual"/>
+        <geom name="fr3v2_link0_collision" mesh="link0_coll" class="collision"/>
+        <inertial pos="-0.0172 0.0004 0.0745" quat="0.661377 -0.250161 -0.250161 0.661377" mass="3.85"
+          diaginertia="0.0115 0.0107656 0.00673444"/>
+        <body name="fr3v2_link1" pos="0 0 0.333">
+          <inertial pos="-0.00458 0.027016 -0.0618" quat="0.989811 0.110789 0.00992127 0.0888923" mass="2.4377"
+            diaginertia="0.0233003 0.0222611 0.00463865"/>
+          <joint name="fr3v2_joint1" pos="0 0 0" axis="0 0 1" range="-2.7437 2.7437" actuatorfrcrange="-87 87"
+            damping="0.003" frictionloss="0.2" armature="0.17"/>
+          <geom name="fr3v2_link1_collision" class="collision" mesh="link1_coll"/>
+          <geom mesh="link1_3" material="white" class="visual"/>
+          <body name="fr3v2_link2" quat="0.707107 -0.707107 0 0">
+            <inertial pos="-0.003473 -0.168509 -0.010479" quat="0.644329 0.758803 -0.0323054 0.0895283" mass="2.2375"
+              diaginertia="0.0192001 0.0173406 0.0052593"/>
+            <joint name="fr3v2_joint2" pos="0 0 0" axis="0 0 1" range="-1.7837 1.7837" actuatorfrcrange="-87 87"
+              damping="0.003" frictionloss="0.2" armature="0.17"/>
+            <geom name="fr3v2_link2_collision" class="collision" mesh="link2_coll"/>
+            <geom mesh="link2_3" material="white" class="visual"/>
+            <body name="fr3v2_link3" pos="0 -0.316 0" quat="0.707107 0.707107 0 0">
+              <inertial pos="0.092968 0.01801 0.033533" quat="0.877348 -0.0280595 -0.265819 0.398514" mass="2.18579"
+                diaginertia="0.0146052 0.0104212 0.00447362"/>
+              <joint name="fr3v2_joint3" pos="0 0 0" axis="0 0 1" range="-2.9007 2.9007" actuatorfrcrange="-87 87"
+                damping="0.003" frictionloss="0.2" armature="0.17"/>
+              <geom name="fr3v2_link3_collision" class="collision" mesh="link3_coll"/>
+              <geom mesh="link3_3" material="white" class="visual"/>
+              <body name="fr3v2_link4" pos="0.0825 0 0" quat="0.707107 0.707107 0 0">
+                <inertial pos="-0.068745 0.092947 0.011195" quat="0.725019 0.567552 -0.379628 -0.0900828" mass="2.17587"
+                  diaginertia="0.0126388 0.00973606 0.00442618"/>
+                <joint name="fr3v2_joint4" pos="0 0 0" axis="0 0 1" range="-3.0421 -0.1518" actuatorfrcrange="-87 87"
+                  damping="0.003" frictionloss="0.2" armature="0.17"/>
+                <geom name="fr3v2_link4_collision" class="collision" mesh="link4_coll"/>
+                <geom mesh="link4_3" material="white" class="visual"/>
+                <body name="fr3v2_link5" pos="-0.0825 0.384 0" quat="0.707107 -0.707107 0 0">
+                  <inertial pos="-0.004197 0.010257 -0.058103" quat="0.993747 -0.0901363 0.0101557 0.0651102"
+                    mass="2.17482" diaginertia="0.0318998 0.0305191 0.0038801"/>
+                  <joint name="fr3v2_joint5" pos="0 0 0" axis="0 0 1" range="-2.8065 2.8065" actuatorfrcrange="-12 12"
+                    damping="0.003" frictionloss="0.2" armature="0.0425"/>
+                  <geom name="fr3v2_link5_collision" class="collision" mesh="link5_coll"/>
+                  <geom mesh="link5_3" material="white" class="visual"/>
+                  <body name="fr3v2_link6" quat="0.707107 0.707107 0 0">
+                    <inertial pos="0.070958 -0.014137 -0.035324" quat="-0.141552 0.574736 0.130817 0.795317"
+                      mass="1.56762" diaginertia="0.0047496 0.0041461 0.0024043"/>
+                    <joint name="fr3v2_joint6" pos="0 0 0" axis="0 0 1" range="0.5445 4.5169" actuatorfrcrange="-12 12"
+                      damping="0.003" frictionloss="0.2" armature="0.0425"/>
+                    <geom name="fr3v2_link6_collision" class="collision" mesh="link6_coll"/>
+                    <geom mesh="link6_0" material="gray" class="visual"/>
+                    <geom mesh="link6_1" material="white" class="visual"/>
+                    <geom mesh="link6_2" material="white" class="visual"/>
+                    <geom mesh="link6_3" material="gray" class="visual"/>
+                    <geom mesh="link6_4" material="button_red" class="visual"/>
+                    <geom mesh="link6_5" material="button_red" class="visual"/>
+                    <geom mesh="link6_6" material="black" class="visual"/>
+                    <geom mesh="link6_7" material="white" class="visual"/>
+                    <geom mesh="link6_8" material="button_red" class="visual"/>
+                    <geom mesh="link6_9" material="white" class="visual"/>
+                    <body name="fr3v2_link7" pos="0.088 0 0" quat="0.707107 0.707107 0 0">
+                      <inertial pos="0.008204 0.001156 0.061016" quat="0.70836 0.00347393 0.0424735 0.704564"
+                        mass="0.682876" diaginertia="0.00110022 0.000899844 0.000699938"/>
+                      <joint name="fr3v2_joint7" pos="0 0 0" axis="0 0 1" range="-3.0159 3.0159"
+                        actuatorfrcrange="-12 12" damping="0.003" frictionloss="0.2" armature="0.0425"/>
+                      <geom name="fr3v2_link7_collision" class="collision" mesh="link7_coll"/>
+                      <geom mesh="link7_0" material="white" class="visual"/>
+                      <geom mesh="link7_1" material="white" class="visual"/>
+                      <geom mesh="link7_2" material="white" class="visual"/>
+                      <geom mesh="link7_3" material="white" class="visual"/>
+                      <geom mesh="link7_4" material="white" class="visual"/>
+                      <geom mesh="link7_5" material="white" class="visual"/>
+                      <geom mesh="link7_6" material="white" class="visual"/>
+                      <body name="fr3v2_link8" pos="0 0 0.107">
+                        <site name="ee_site" size="0.012" rgba="1 0.1 0.1 1"/>
+                        <body name="docking_tool" pos="0 0 0.025">
+                          <inertial pos="0 0 0" mass="0.18" diaginertia="0.00035 0.00035 0.00025"/>
+                          <site name="docking_sensor_site" size="0.002" rgba="1 0.6 0 0.8"/>
+                          <site name="docking_ee_site" size="0.009" rgba="1 0.2 0.1 1"/>
+                          <geom name="docking_tool_visual" type="mesh" mesh="docking_part"
+                            euler="0 0 0.698132" material="docking_metal" contype="0" conaffinity="0" group="2"/>
+                          <!-- 对接端面的等效刚体接触代理；STL 继续承担可视化。 -->
+                          <geom name="docking_tool_proxy" type="cylinder" pos="0 0 0.0235" size="0.022 0.003"
+                            contype="1" conaffinity="2" group="3"/>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="actuator1" joint="fr3v2_joint1" ctrlrange="-87 87"/>
+    <motor name="actuator2" joint="fr3v2_joint2" ctrlrange="-87 87"/>
+    <motor name="actuator3" joint="fr3v2_joint3" ctrlrange="-87 87"/>
+    <motor name="actuator4" joint="fr3v2_joint4" ctrlrange="-87 87"/>
+    <motor name="actuator5" joint="fr3v2_joint5" ctrlrange="-12 12"/>
+    <motor name="actuator6" joint="fr3v2_joint6" ctrlrange="-12 12"/>
+    <motor name="actuator7" joint="fr3v2_joint7" ctrlrange="-12 12"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 0 0 -1.57079 0 1.57079 -0.7853" ctrl="0 0 0 0 0 0 0"/>
+  </keyframe>
+</mujoco>

@@ -6,8 +6,9 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-from .config import ACTUATOR_NAMES, JOINT_NAMES, MODEL_PATH, SIM
+from .config import ACTUATOR_NAMES, DOCKING, DOCKING_MODEL_PATH, JOINT_NAMES, MODEL_PATH, SIM
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,18 @@ class ModelIds:
     site: int
     hand_body: int
     target_mocap: int
+
+
+@dataclass(frozen=True)
+class DockingModelIds(ModelIds):
+    """柔顺对接场景中额外元素的索引集合。"""
+
+    socket_mocap: int
+    socket_site: int
+    force_sensor: int
+    torque_sensor: int
+    tool_contact_geom: int
+    socket_contact_geom: int
 
 
 def load_model() -> tuple[mujoco.MjModel, ModelIds]:
@@ -62,6 +75,52 @@ def load_model() -> tuple[mujoco.MjModel, ModelIds]:
     return model, ids
 
 
+def load_docking_model() -> tuple[mujoco.MjModel, DockingModelIds]:
+    """加载包含 FR3、对接件、接触对和力/力矩传感器的独立场景。"""
+    model = mujoco.MjModel.from_xml_path(str(DOCKING_MODEL_PATH))
+    model.opt.timestep = SIM.physics_dt
+    joint_ids = np.array(
+        [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name) for name in JOINT_NAMES]
+    )
+    actuator_ids = np.array(
+        [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name) for name in ACTUATOR_NAMES]
+    )
+    reference_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "docking_reference")
+    socket_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "docking_socket")
+    ids = DockingModelIds(
+        joint_qpos=model.jnt_qposadr[joint_ids].copy(),
+        joint_dof=model.jnt_dofadr[joint_ids].copy(),
+        actuators=actuator_ids,
+        site=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "docking_ee_site"),
+        hand_body=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "docking_tool"),
+        target_mocap=int(model.body_mocapid[reference_body]),
+        socket_mocap=int(model.body_mocapid[socket_body]),
+        socket_site=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "docking_socket_site"),
+        force_sensor=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "docking_force_sensor"),
+        torque_sensor=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "docking_torque_sensor"),
+        tool_contact_geom=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "docking_tool_proxy"),
+        socket_contact_geom=mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_GEOM, "docking_socket_proxy"
+        ),
+    )
+    required = (
+        *ids.joint_qpos,
+        *ids.actuators,
+        ids.site,
+        ids.hand_body,
+        ids.target_mocap,
+        ids.socket_mocap,
+        ids.socket_site,
+        ids.force_sensor,
+        ids.torque_sensor,
+        ids.tool_contact_geom,
+        ids.socket_contact_geom,
+    )
+    if min(required) < 0:
+        raise RuntimeError("docking model is missing one or more required named elements")
+    return model, ids
+
+
 def reset_home(model: mujoco.MjModel, data: mujoco.MjData, ids: ModelIds) -> None:
     """将仿真状态复位到项目规定的初始姿态。
 
@@ -74,6 +133,33 @@ def reset_home(model: mujoco.MjModel, data: mujoco.MjData, ids: ModelIds) -> Non
     data.qpos[ids.joint_qpos] = SIM.home_q
     data.ctrl[:] = 0.0
     mujoco.mj_forward(model, data)
+
+
+def reset_docking_home(
+    model: mujoco.MjModel, data: mujoco.MjData, ids: DockingModelIds
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """复位 FR3，并由工具初始位姿设置固定母端的位姿。
+
+    Returns:
+        依次返回工具初始位置、初始旋转矩阵、母端位置和母端旋转矩阵。
+    """
+    mujoco.mj_resetData(model, data)
+    data.qpos[ids.joint_qpos] = SIM.home_q
+    data.ctrl[:] = 0.0
+    mujoco.mj_forward(model, data)
+    tool_position, tool_rotation = site_pose(data, ids.site)
+    approach_axis = tool_rotation[:, 2]
+    socket_position = tool_position + DOCKING.start_distance * approach_axis
+    # 母端绕工具 x 轴翻转 180°，使两个对接面的法向相对。
+    socket_rotation = tool_rotation @ np.diag([1.0, -1.0, -1.0])
+    data.mocap_pos[ids.socket_mocap] = socket_position
+    socket_quaternion = Rotation.from_matrix(socket_rotation).as_quat()
+    data.mocap_quat[ids.socket_mocap] = socket_quaternion[[3, 0, 1, 2]]
+    data.mocap_pos[ids.target_mocap] = tool_position
+    tool_quaternion = Rotation.from_matrix(tool_rotation).as_quat()
+    data.mocap_quat[ids.target_mocap] = tool_quaternion[[3, 0, 1, 2]]
+    mujoco.mj_forward(model, data)
+    return tool_position, tool_rotation, socket_position, socket_rotation
 
 
 def site_pose(data: mujoco.MjData, site_id: int) -> tuple[np.ndarray, np.ndarray]:

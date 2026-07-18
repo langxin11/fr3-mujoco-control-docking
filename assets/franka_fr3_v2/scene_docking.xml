@@ -1,0 +1,50 @@
+<mujoco model="fr3v2 compliant docking scene">
+  <include file="fr3v2_docking.xml"/>
+
+  <option integrator="implicitfast" cone="elliptic" sdf_iterations="10" sdf_initpoints="40"/>
+  <size nconmax="5000" njmax="20000"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20" offwidth="720" offheight="540"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    <camera name="docking_report" pos="1.25 -1.25 0.95" xyaxes="0.707 0.707 0 -0.34 0.34 0.88"/>
+    <!-- 绿色标架显示对接轨迹的期望工具位姿，不参与碰撞。 -->
+    <body name="docking_reference" mocap="true" pos="0.4 0 0.5">
+      <site name="docking_reference_site" type="sphere" size="0.014" rgba="0.1 1 0.2 0.7"/>
+      <site name="docking_reference_axis_x" type="capsule" fromto="0 0 0 0.055 0 0" size="0.003" rgba="1 0.15 0.1 0.9"/>
+      <site name="docking_reference_axis_y" type="capsule" fromto="0 0 0 0 0.055 0" size="0.003" rgba="0.1 1 0.2 0.9"/>
+      <site name="docking_reference_axis_z" type="capsule" fromto="0 0 0 0 0 0.055" size="0.003" rgba="0.1 0.35 1 0.9"/>
+    </body>
+    <!-- 母端为运动学固定体，复位时根据 FR3 初始工具位姿设置其世界位姿。 -->
+    <body name="docking_socket" mocap="true" pos="0.4 0 0.42">
+      <site name="docking_socket_site" size="0.004" rgba="0.1 0.4 1 1"/>
+      <geom name="docking_socket_visual" type="mesh" mesh="docking_part" material="docking_metal"
+        contype="0" conaffinity="0" group="2"/>
+      <geom name="docking_socket_proxy" type="cylinder" pos="0 0 0.0235" size="0.022 0.003"
+        contype="2" conaffinity="1" group="3"/>
+    </body>
+  </worldbody>
+
+  <contact>
+    <pair name="docking_contact" geom1="docking_tool_proxy" geom2="docking_socket_proxy" condim="6"
+      friction="0.8 0.008 0.001" solref="0.015 1" solimp="0.92 0.99 0.001 0.5 2" margin="0.001"/>
+  </contact>
+
+  <sensor>
+    <force name="docking_force_sensor" site="docking_sensor_site"/>
+    <torque name="docking_torque_sensor" site="docking_sensor_site"/>
+  </sensor>
+</mujoco>

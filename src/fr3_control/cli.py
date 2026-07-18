@@ -6,9 +6,9 @@ import argparse
 import json
 from pathlib import Path
 
-from .plots import generate_plots
-from .simulation import run_all_experiments, simulate
-from .video import render_video
+from .plots import generate_docking_plots, generate_plots
+from .simulation import run_all_experiments, run_docking_experiments, simulate, simulate_docking
+from .video import render_docking_video, render_video
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -22,11 +22,19 @@ def _parser() -> argparse.ArgumentParser:
     single = commands.add_parser("simulate", help="run one controller/scenario pair")
     single.add_argument("--controller", choices=("pd", "ctc"), required=True)
     single.add_argument("--scenario", choices=("nominal", "disturbance"), required=True)
+    docking = commands.add_parser("simulate-docking", help="run one compliant docking controller")
+    docking.add_argument("--controller", choices=("ctc", "impedance"), required=True)
     commands.add_parser("run-experiments", help="run all four experiments")
+    commands.add_parser(
+        "run-docking-experiments", help="run rigid and compliant docking experiments"
+    )
     commands.add_parser("plot-results", help="generate report figures")
+    commands.add_parser("plot-docking-results", help="generate compliant docking figures")
     video = commands.add_parser("render-video", help="render the MP4 demonstration")
     video.add_argument("--run", default="all")
     video.add_argument("--output", type=Path)
+    docking_video = commands.add_parser("render-docking-video", help="render compliant docking MP4")
+    docking_video.add_argument("--output", type=Path)
     return parser
 
 
@@ -36,12 +44,21 @@ def main() -> None:
     if args.command == "simulate":
         _, metrics = simulate(args.controller, args.scenario)
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
+    elif args.command == "simulate-docking":
+        _, metrics = simulate_docking(args.controller)
+        print(json.dumps(metrics, ensure_ascii=False, indent=2))
     elif args.command == "run-experiments":
         print(json.dumps(run_all_experiments(), ensure_ascii=False, indent=2))
+    elif args.command == "run-docking-experiments":
+        print(json.dumps(run_docking_experiments(), ensure_ascii=False, indent=2))
     elif args.command == "plot-results":
         print("\n".join(generate_plots()))
+    elif args.command == "plot-docking-results":
+        print("\n".join(generate_docking_plots()))
     elif args.command == "render-video":
         print(render_video(args.run, args.output))
+    elif args.command == "render-docking-video":
+        print(render_docking_video(args.output))
 
 
 if __name__ == "__main__":
