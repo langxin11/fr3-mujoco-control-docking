@@ -131,8 +131,14 @@ def task_space_impedance(
     """计算带外力反馈与零空间姿态保持的六维操作空间阻抗转矩。
 
     阻抗关系为 ``M_d (xdd-xdd_d)+D_d (xd-xd_d)+K_d (x-x_d)=F_ext``。
-    在 MuJoCo 的实时质量矩阵和雅可比上构造操作空间惯性，从而将期望
-    任务加速度映射为关节转矩。外力为世界坐标系下的工具接触力/力矩。
+    阻尼矩阵不采用手工整定，而是根据操作空间惯性矩阵 ``Λ`` 和参考刚度
+    ``K_r`` 在线计算临界阻尼：
+
+        ``D_r = 2 √(diag(Λ) ⊙ K_r)``
+
+    该公式为 Ren & Shan (2026) Eq. (29) 在刚度矩阵取对角形式时的退化，
+    保证了各自由度的闭环响应均处于临界阻尼状态，无需逐任务调参。
+    外力为世界坐标系下的工具接触力/力矩。
     """
     position, rotation = site_pose(data, ids.site)
     jacobian = site_jacobian(model, data, ids.site, ids.joint_dof)
@@ -143,17 +149,19 @@ def task_space_impedance(
         Rotation.from_matrix(target_rotation @ rotation.T).as_rotvec(),
     ]
     velocity_error = target_twist - current_twist
-    virtual_mass = DOCKING.virtual_mass
-    commanded_acceleration = (
-        target_acceleration
-        + (external_wrench + DOCKING.stiffness * pose_error + DOCKING.damping * velocity_error)
-        / virtual_mass
-    )
     matrix = mass_matrix(model, data, ids.joint_dof)
     inverse_mass_jacobian_t = np.linalg.solve(matrix, jacobian.T)
     operational_inverse = jacobian @ inverse_mass_jacobian_t
     operational_inertia = np.linalg.inv(
         operational_inverse + DOCKING.operational_damping**2 * np.eye(6)
+    )
+    # 临界阻尼 D_r = 2 √(diag(Λ) ⊙ K_r)，各 DOF 自适应实际惯性。
+    lambda_diag = np.diag(operational_inertia)
+    damping = 2.0 * np.sqrt(lambda_diag * DOCKING.stiffness)
+    commanded_acceleration = (
+        target_acceleration
+        + (external_wrench + DOCKING.stiffness * pose_error + damping * velocity_error)
+        / DOCKING.virtual_mass
     )
     task_wrench = operational_inertia @ commanded_acceleration
     dynamically_consistent_inverse = inverse_mass_jacobian_t @ operational_inertia

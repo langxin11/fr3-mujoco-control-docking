@@ -132,9 +132,9 @@ class DockingConfig:
     stiffness: np.ndarray = field(
         default_factory=lambda: np.array([100.0, 100.0, 100.0, 25.0, 25.0, 25.0], dtype=float)
     )
-    damping: np.ndarray = field(
-        default_factory=lambda: np.array([50.0, 50.0, 50.0, 10.0, 10.0, 10.0], dtype=float)
-    )
+    # 阻尼不再手动指定，由 task_space_impedance 根据操作空间惯性矩阵 Λ 和
+    # 参考刚度 K_r 按 D_r = 2√(Λ⊙K_r) 在线计算临界阻尼。该公式源自
+    # Ren & Shan (2026) Eq. (29) 在刚度矩阵为对角时的退化形式。
     nullspace_stiffness: float = 4.0
     nullspace_damping: float = 2.5
     operational_damping: float = 2e-4
