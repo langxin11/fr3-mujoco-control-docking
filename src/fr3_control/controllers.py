@@ -85,26 +85,31 @@ def bias_compensated_pd(
     ids: ModelIds,
     q_ref: np.ndarray,
     qd_ref: np.ndarray,
-    _qdd_ref: np.ndarray,
+    qdd_ref: np.ndarray,
 ) -> np.ndarray:
-    """计算带 MuJoCo 偏置力补偿的关节空间 PD 转矩。
+    """计算带惯性前馈和 MuJoCo 偏置力补偿的关节空间 PD 转矩。
+
+    控制律为 :math:`tau = M(q) ddot{q}_{ref} + K_p e + K_d dot{e} + h(q, dot{q})`，
+    其中惯性前馈项 :math:`M(q) ddot{q}_{ref}` 使控制器能够提前输出
+    维持参考加速度所需的力矩，无需等待位置或速度误差积累。
 
     Args:
-        model: MuJoCo 模型；接口保持统一，本控制器不直接使用该参数。
+        model: MuJoCo 模型，用于计算关节空间惯性矩阵。
         data: 当前 MuJoCo 动力学状态。
         ids: FR3 关节和执行器在模型中的索引。
         q_ref: 参考关节角，单位为 rad，形状为 ``(7,)``。
         qd_ref: 参考关节角速度，单位为 rad/s，形状为 ``(7,)``。
-        _qdd_ref: 参考关节角加速度；PD 控制器不使用该参数。
+        qdd_ref: 参考关节角加速度，单位为 rad/s²，形状为 ``(7,)``。
 
     Returns:
         期望关节转矩，单位为 N·m，形状为 ``(7,)``。
     """
-    del model
     q = data.qpos[ids.joint_qpos]
     qd = data.qvel[ids.joint_dof]
+    matrix = mass_matrix(model, data, ids.joint_dof)
     return (
-        GAINS.pd_stiffness * (q_ref - q)
+        matrix @ qdd_ref
+        + GAINS.pd_stiffness * (q_ref - q)
         + GAINS.pd_damping * (qd_ref - qd)
         + data.qfrc_bias[ids.joint_dof]
     )
