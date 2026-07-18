@@ -12,13 +12,15 @@ from scipy.spatial.transform import Rotation
 
 from .actuator import PMSMDriveBank
 from .config import DOCKING, RESULTS_DIR, SIM
-from .controllers import CONTROLLERS, task_space_impedance
+from .controllers import CONTROLLERS, MomentumObserver, task_space_impedance
 from .model import (
     DockingModelIds,
     load_docking_model,
     load_model,
+    mass_matrix,
     reset_docking_home,
     reset_home,
+    site_jacobian,
     site_pose,
 )
 from .trajectory import ReferenceTrajectory, _quintic, build_docking_reference, build_reference
@@ -173,6 +175,20 @@ def _docking_metrics(log: dict[str, np.ndarray]) -> dict[str, float | str]:
         "saturation_percent": float(100.0 * np.mean(log["saturated"])),
         "electrical_energy_j": float(
             np.sum(np.abs(log["current"] * log["voltage"])) * SIM.control_dt
+        ),
+        # 动量观测器 vs 接触传感器的外力估计误差。
+        "observer_wrench_rmse_n": float(
+            np.sqrt(np.mean(np.linalg.norm(log["observer_wrench"] - log["contact_wrench"], axis=1) ** 2))
+        ),
+        "observer_force_rmse_n": float(
+            np.sqrt(
+                np.mean(
+                    np.linalg.norm(
+                        log["observer_wrench"][:, :3] - log["contact_wrench"][:, :3], axis=1
+                    )
+                    ** 2
+                )
+            )
         ),
     }
 
@@ -358,6 +374,8 @@ def simulate_docking(
         "saturated": np.zeros((count, 7), dtype=bool),
         "contact_wrench": np.zeros((count, 6)),
         "contact_count": np.zeros(count, dtype=int),
+        "observer_wrench": np.zeros((count, 6)),
+        "observer_joint_torque": np.zeros((count, 7)),
         "controller": controller_name,
     }
     physics_dt = model.opt.timestep
@@ -372,6 +390,7 @@ def simulate_docking(
     contact_latch_time = 0.0
     contact_target: np.ndarray | None = None
     contact_target_rotation: np.ndarray | None = None
+    observer = MomentumObserver.create(data.qvel[ids.joint_dof].copy())
 
     for physics_step in range(total_steps + 1):
         control_index = physics_step // control_stride
@@ -429,6 +448,20 @@ def simulate_docking(
             log["saturated"][control_index] = saturated
             log["contact_wrench"][control_index] = contact_wrench
             log["contact_count"][control_index] = contact_count
+            # 动量观测器：仅用 (q, q̇, τ) 估计外力，与 MuJoCo 接触传感器独立对比。
+            jac = site_jacobian(model, data, ids.site, ids.joint_dof)
+            matrix_m = mass_matrix(model, data, ids.joint_dof)
+            _, obs_wrench = observer.step(
+                data.qpos[ids.joint_qpos].copy(),
+                data.qvel[ids.joint_dof].copy(),
+                applied_torque,
+                matrix_m,
+                data.qfrc_bias[ids.joint_dof].copy(),
+                jac,
+                SIM.control_dt,
+            )
+            log["observer_wrench"][control_index] = obs_wrench
+            log["observer_joint_torque"][control_index] = observer.integrated_error.copy()
         if physics_step == total_steps:
             break
         applied_torque, voltage, current_ref, saturated = motor.step(

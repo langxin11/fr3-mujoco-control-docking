@@ -176,3 +176,94 @@ def task_space_impedance(
     q = data.qpos[ids.joint_qpos]
     posture_torque = DOCKING.nullspace_stiffness * (SIM.home_q - q) - DOCKING.nullspace_damping * qd
     return jacobian.T @ task_wrench + data.qfrc_bias[ids.joint_dof] + nullspace.T @ posture_torque
+
+
+@dataclass
+class MomentumObserver:
+    """广义动量观测器（参考实现）。
+
+    基于 De Luca et al. (2006) 与 Ren & Shan (2026) Eq. (23-25)：
+
+        p = M(q) q̇,    β = g(q) - C(q,q̇)^T q̇
+        ṗ̃ = τ + τ̃_ext - β
+        τ̃_ext = K_p (p̃ - p)
+
+    外力关节力矩通过动态一致性伪逆映射为任务空间力/力矩：
+
+        ^B F̃_ext = (J^T)^# τ̃_ext,   (J^T)^# = (J J^T)^{-1} J
+
+    .. note::
+
+        MuJoCo 的 ``qfrc_bias`` 包含 ``C q̇ + g`` 但不单独暴露
+        ``C^T q̇``。准确实现需要在 MuJoCo 内部提取科氏力矩阵或
+        使用高精度 Ṁ 估计。当前实现通过有限差分近似 Ṁ q̇，
+        在低速接触任务中可提供定性正确的外力方向，但定量精度
+        受限于数值微分噪声。对接实验中以 MuJoCo 接触传感器
+        作为主外力源，本观测器保留为无需传感器的参考方案。
+
+    Attributes:
+        momentum_estimate: 估计的广义动量，形状 ``(7,)``。
+        _last_momentum: 上一时刻的实际动量。
+        _last_qd: 上一时刻的关节速度。
+    """
+
+    momentum_estimate: np.ndarray
+    integrated_error: np.ndarray
+    _last_momentum: np.ndarray | None = None
+    _last_qd: np.ndarray | None = None
+
+    @classmethod
+    def create(cls, qd: np.ndarray, ids: ModelIds | None = None) -> MomentumObserver:
+        """以零动量初始化观测器。"""
+        return cls(
+            momentum_estimate=np.zeros(7),
+            integrated_error=np.zeros(7),
+            _last_momentum=None,
+            _last_qd=None,
+        )
+
+    def step(
+        self,
+        q: np.ndarray,
+        qd: np.ndarray,
+        tau_applied: np.ndarray,
+        mass_matrix: np.ndarray,
+        bias: np.ndarray,
+        jacobian: np.ndarray,
+        dt: float,
+        *,
+        kp: float = 2.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """推进一次动量观测器。
+
+        Args:
+            q: 当前关节角，单位为 rad，形状 ``(7,)``。
+            qd: 当前关节角速度，单位为 rad/s，形状 ``(7,)``。
+            tau_applied: 实际施加的关节力矩，单位为 N·m。
+            mass_matrix: 当前关节空间惯性矩阵 M(q)，形状 ``(7, 7)``。
+            bias: 当前 MuJoCo 偏置力 qfrc_bias，形状 ``(7,)``。
+            jacobian: 当前几何雅可比 J，形状 ``(6, 7)``。
+            dt: 积分步长，单位为 s。
+            kp: 动量误差比例增益，默认 2 s⁻¹。
+
+        Returns:
+            ``(τ_ext, F_ext)`` 关节与任务空间外力估计。
+        """
+        actual_momentum = mass_matrix @ qd
+        # Ṁ q̇ 有限差分估计（用于 β 修正）
+        m_dot_qd = np.zeros(7)
+        if self._last_momentum is not None and self._last_qd is not None:
+            p_diff = (actual_momentum - self._last_momentum) / dt
+            m_qdd = mass_matrix @ ((qd - self._last_qd) / dt)
+            m_dot_qd = p_diff - m_qdd
+        self._last_momentum = actual_momentum.copy()
+        self._last_qd = qd.copy()
+        beta = bias - m_dot_qd  # g - C^T q̇
+        momentum_dot = tau_applied - beta
+        delta = self.momentum_estimate - actual_momentum
+        tau_ext = kp * delta
+        self.momentum_estimate += dt * (momentum_dot + tau_ext)
+        jjt = jacobian @ jacobian.T + 1e-6 * np.eye(6)
+        dynamically_consistent_pinv = np.linalg.solve(jjt, jacobian)
+        wrench = dynamically_consistent_pinv @ tau_ext
+        return tau_ext, wrench
