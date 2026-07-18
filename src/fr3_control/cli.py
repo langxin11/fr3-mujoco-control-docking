@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .plots import generate_docking_plots, generate_plots
 from .simulation import run_all_experiments, run_docking_experiments, simulate, simulate_docking
-from .video import render_docking_video, render_video
+from .video import render_docking_interface_preview, render_docking_video, render_video
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +35,11 @@ def _parser() -> argparse.ArgumentParser:
     video.add_argument("--output", type=Path)
     docking_video = commands.add_parser("render-docking-video", help="render compliant docking MP4")
     docking_video.add_argument("--output", type=Path)
+    interface_preview = commands.add_parser(
+        "render-docking-interface-preview",
+        help="render the arm-free docking-interface alignment preview",
+    )
+    interface_preview.add_argument("--output", type=Path)
     return parser
 
 
@@ -59,6 +64,8 @@ def main() -> None:
         print(render_video(args.run, args.output))
     elif args.command == "render-docking-video":
         print(render_docking_video(args.output))
+    elif args.command == "render-docking-interface-preview":
+        print(render_docking_interface_preview(args.output))
 
 
 if __name__ == "__main__":

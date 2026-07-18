@@ -8,7 +8,16 @@ import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .config import ACTUATOR_NAMES, DOCKING, DOCKING_MODEL_PATH, JOINT_NAMES, MODEL_PATH, SIM
+from .config import (
+    ACTUATOR_NAMES,
+    DOCKING,
+    DOCKING_INTERFACE_AXIAL_OFFSET,
+    DOCKING_INTERFACE_YAW,
+    DOCKING_MODEL_PATH,
+    JOINT_NAMES,
+    MODEL_PATH,
+    SIM,
+)
 
 
 @dataclass(frozen=True)
@@ -150,8 +159,11 @@ def reset_docking_home(
     tool_position, tool_rotation = site_pose(data, ids.site)
     approach_axis = tool_rotation[:, 2]
     socket_position = tool_position + DOCKING.start_distance * approach_axis
-    # 母端绕工具 x 轴翻转 180°，使两个对接面的法向相对。
-    socket_rotation = tool_rotation @ np.diag([1.0, -1.0, -1.0])
+    # 母端先继承工具端的安装偏航，再绕插入轴错开 45° 并翻转端面；这样可视与
+    # SDF 碰撞网格使用同一公母接口坐标系，凸缘和键槽以互补姿态严格相对。
+    mesh_yaw = Rotation.from_euler("z", DOCKING_INTERFACE_YAW).as_matrix()
+    axial_offset = Rotation.from_euler("z", DOCKING_INTERFACE_AXIAL_OFFSET).as_matrix()
+    socket_rotation = tool_rotation @ mesh_yaw @ axial_offset @ np.diag([1.0, -1.0, -1.0])
     data.mocap_pos[ids.socket_mocap] = socket_position
     socket_quaternion = Rotation.from_matrix(socket_rotation).as_quat()
     data.mocap_quat[ids.socket_mocap] = socket_quaternion[[3, 0, 1, 2]]

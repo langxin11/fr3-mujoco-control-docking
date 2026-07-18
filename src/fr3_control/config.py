@@ -10,9 +10,15 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = ROOT / "assets" / "franka_fr3_v2" / "scene.xml"
 DOCKING_MODEL_PATH = ROOT / "assets" / "franka_fr3_v2" / "scene_docking.xml"
+DOCKING_INTERFACE_MODEL_PATH = ROOT / "assets" / "franka_fr3_v2" / "scene_docking_interfaces.xml"
 RESULTS_DIR = ROOT / "results"
 FIGURES_DIR = ROOT / "figures"
 VIDEO_DIR = ROOT / "video"
+
+# 授权对接件在 FR3 工具法兰坐标系内的安装偏航角；视觉与 SDF 碰撞网格必须一致。
+DOCKING_INTERFACE_YAW = np.deg2rad(40.0)
+# 面对面的公母接口还需绕插入轴相差 45°，使凸缘与键槽形成互补配合。
+DOCKING_INTERFACE_AXIAL_OFFSET = np.pi / 4.0
 
 
 @dataclass(frozen=True)
@@ -124,15 +130,18 @@ class DockingConfig:
     # 原生 SDF 网格在工具标记点相距约 66 mm 时开始接触；参考保持小过盈并由力反馈限压。
     contact_distance: float = 0.055
     insertion_distance: float = 0.045
-    contact_hold_force: float = 7.0
-    contact_force_ramp_s: float = 0.4
+    contact_hold_force: float = 5.0
+    # 保持力用 1.5 s 五次曲线升起，避免接触锁定后的二次冲击。
+    contact_force_ramp_s: float = 1.5
     virtual_mass: np.ndarray = field(
         default_factory=lambda: np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0], dtype=float)
     )
     # 各向异性刚度：横向 (x, y) 保持较高刚度以维持对中，轴向 (z，插入方向)
     # 允许较低刚度以吸收接触冲击。世界坐标系下，对接接近方向近似沿 z 轴。
+    # 自由空间刚度需足够高以克服冗余机械臂操作空间控制中的运动学耦合
+    # （J̇ q̇ 扰动），尤其是在末端速度较大时。
     stiffness: np.ndarray = field(
-        default_factory=lambda: np.array([200.0, 200.0, 100.0, 25.0, 25.0, 25.0], dtype=float)
+        default_factory=lambda: np.array([800.0, 800.0, 400.0, 80.0, 80.0, 80.0], dtype=float)
     )
     # 阻尼不再手动指定，由 task_space_impedance 根据操作空间惯性矩阵 Λ 和
     # 参考刚度 K_r 按 D_r = 2√(Λ⊙K_r) 在线计算临界阻尼。该公式源自
@@ -145,10 +154,10 @@ class DockingConfig:
     # 横向最低刚度 80 N/m 限制 1 N 横向力下的偏移在 ~12 mm 以内。
     adaptive_stiffness_gain: float = 0.5
     min_stiffness: np.ndarray = field(
-        default_factory=lambda: np.array([80.0, 80.0, 30.0, 8.0, 8.0, 8.0], dtype=float)
+        default_factory=lambda: np.array([80.0, 80.0, 40.0, 10.0, 10.0, 10.0], dtype=float)
     )
-    nullspace_stiffness: float = 4.0
-    nullspace_damping: float = 2.5
+    nullspace_stiffness: float = 60.0
+    nullspace_damping: float = 12.0
     operational_damping: float = 2e-4
 
 

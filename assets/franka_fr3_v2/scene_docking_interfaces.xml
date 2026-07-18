@@ -1,0 +1,40 @@
+<mujoco model="docking interface alignment check">
+  <!-- 仅保留公母对接件：用于检查安装偏航、法向相对关系和插入位姿。 -->
+  <compiler angle="radian" meshdir="assets"/>
+
+  <visual>
+    <headlight diffuse="0.7 0.7 0.7" ambient="0.35 0.35 0.35" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.08 0.12 0.18 1"/>
+    <global offwidth="1440" offheight="1080"/>
+  </visual>
+
+  <asset>
+    <mesh name="docking_part" file="../../docking/dock_1_17_new.STL"/>
+    <material name="plug_metal" rgba="0.93 0.38 0.12 1" specular="0.65" shininess="0.7"/>
+    <material name="socket_metal" rgba="0.14 0.52 0.86 0.62" specular="0.7" shininess="0.7"/>
+    <texture type="2d" name="ground" builtin="checker" rgb1="0.12 0.18 0.26" rgb2="0.08 0.12 0.18"
+      width="300" height="300"/>
+    <material name="ground" texture="ground" texuniform="true" texrepeat="5 5" reflectance="0.15"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0.25 -0.25 0.45" directional="true" dir="-0.3 0.3 -0.9"/>
+    <geom name="floor" type="plane" size="0 0 0.05" material="ground"/>
+    <camera name="interface_report" pos="0.17 -0.17 0.13"
+      xyaxes="0.707 0.707 0 -0.34 0.34 0.88"/>
+
+    <!-- 公端网格的 40° 偏航与 FR3 对接模型完全相同。 -->
+    <body name="interface_plug" pos="0 0 0">
+      <site name="interface_plug_origin" type="sphere" size="0.006" rgba="1 0.9 0.1 1"/>
+      <geom name="interface_plug_visual" type="mesh" mesh="docking_part" euler="0 0 0.698132"
+        material="plug_metal" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- Rz(40°) Rz(45°) Rx(180°)：凸缘与键槽错开 45°，端面法向相对。 -->
+    <body name="interface_socket" pos="0 0 0.055" quat="0 0.7372773 0.6755902 0">
+      <site name="interface_socket_origin" type="sphere" size="0.006" rgba="0.1 0.9 1 1"/>
+      <geom name="interface_socket_visual" type="mesh" mesh="docking_part" material="socket_metal"
+        contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

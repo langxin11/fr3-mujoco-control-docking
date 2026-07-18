@@ -372,7 +372,7 @@ def simulate_docking(
     reference: ReferenceTrajectory | None = None,
     save: bool = True,
 ) -> tuple[dict[str, np.ndarray], dict[str, float | str]]:
-    """运行 FR3 柔顺对接；支持刚性 CTC 与任务空间阻抗控制。"""
+    """运行 FR3 柔顺对接；比较关节空间逆动力学与笛卡尔空间阻抗控制。"""
     if controller_name not in {"ctc", "impedance"}:
         raise ValueError(f"unknown docking controller: {controller_name}")
     model, ids = load_docking_model()
@@ -420,6 +420,10 @@ def simulate_docking(
     contact_target: np.ndarray | None = None
     contact_target_rotation: np.ndarray | None = None
     observer = MomentumObserver.create(data.qvel[ids.joint_dof].copy())
+    # J̇ q̇ 补偿所需的前一拍状态，首次调用时均为 None。
+    prev_qd: np.ndarray | None = None
+    prev_twist: np.ndarray | None = None
+    prev_jacobian: np.ndarray | None = None
 
     for physics_step in range(total_steps + 1):
         control_index = physics_step // control_stride
@@ -446,7 +450,7 @@ def simulate_docking(
                     )
                     desired_contact_wrench[:3] = -DOCKING.contact_hold_force * target_rotation[:, 2]
                     desired_contact_wrench[:3] *= force_scale
-                desired_torque = task_space_impedance(
+                desired_torque, prev_qd, prev_twist, prev_jacobian = task_space_impedance(
                     model,
                     data,
                     ids,
@@ -455,6 +459,11 @@ def simulate_docking(
                     reference.ee_twist[control_index],
                     reference.ee_acceleration[control_index],
                     contact_wrench - desired_contact_wrench,
+                    dt=SIM.control_dt,
+                    prev_qd=prev_qd,
+                    prev_twist=prev_twist,
+                    prev_jacobian=prev_jacobian,
+                    q_nullspace=q_ref,
                 )
             data.mocap_pos[ids.target_mocap] = target
             target_quaternion = Rotation.from_matrix(target_rotation).as_quat()
@@ -506,7 +515,7 @@ def simulate_docking(
 
 
 def run_docking_experiments() -> list[dict[str, float | str]]:
-    """运行刚性 CTC 与阻抗控制的两组 FR3 对接实验。"""
+    """运行关节空间逆动力学与笛卡尔空间阻抗控制的两组 FR3 对接实验。"""
     model, ids = load_docking_model()
     reference = build_docking_reference(model, ids)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)

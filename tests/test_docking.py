@@ -21,7 +21,7 @@ def test_docking_model_reference_and_impedance_torque() -> None:
     assert model.geom_type[ids.socket_contact_geom] == mujoco.mjtGeom.mjGEOM_SDF
     assert np.all(np.isfinite(reference.q))
     assert np.max(np.abs(np.diff(reference.q, axis=0))) < 0.01
-    torque = task_space_impedance(
+    torque, _, _, _ = task_space_impedance(
         model,
         data,
         ids,

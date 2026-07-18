@@ -3,7 +3,7 @@
 本项目是“机器人系统设计与应用”高阶期末作业。它使用 MuJoCo Menagerie 的 Franka
 Research 3 v2 模型，在 PMSM 磁场定向电流环与减速器约束下比较重力/偏置补偿 PD 和
 计算力矩控制，任务为末端竖直圆与 x--y 平面 8 字组合位姿轨迹跟踪，并包含 15 N 外力抗扰实验。
-此外，项目提供独立的 FR3 柔顺对接场景，对比刚性 CTC 与操作空间阻抗控制在接触峰值、保持力和柔顺位姿偏差上的权衡。
+此外，项目提供独立的 FR3 柔顺对接场景，对比关节空间逆动力学轨迹跟踪与笛卡尔空间阻抗控制在接触峰值、保持力和柔顺位姿偏差上的权衡。
 
 ## 快速开始
 
@@ -15,6 +15,7 @@ MUJOCO_GL=egl uv run fr3-control render-video
 uv run fr3-control run-docking-experiments
 uv run fr3-control plot-docking-results
 MUJOCO_GL=egl uv run fr3-control render-docking-video
+MUJOCO_GL=egl uv run fr3-control render-docking-interface-preview
 uv run pytest
 ```
 
@@ -30,7 +31,8 @@ uv run fr3-control simulate-docking --controller impedance
 - `results/`：四组实验的 NPZ、CSV 和 JSON 指标。
 - `figures/`：报告使用的结果图。
 - `video/fr3_control_demo.mp4`：演示视频。
-- `video/fr3_compliant_docking.mp4`：刚性 CTC 与阻抗控制的柔顺对接视频。
+- `video/fr3_compliant_docking.mp4`：关节空间逆动力学与笛卡尔空间阻抗控制的柔顺对接视频。
+- `assets/franka_fr3_v2/scene_docking_interfaces.xml`：不含机械臂的公母接口对中检查场景；其预览图输出为 `figures/docking_interface_alignment.png`。
 - `report/main.typ` 与 `report/期末作业报告.pdf`：报告源文件和 PDF。
 
 报告中的姓名和学号已经填写；余老师知识点仍使用显式占位符，提交前必须替换。
@@ -43,7 +45,7 @@ uv run fr3-control simulate-docking --controller impedance
 
 柔顺对接使用 `assets/franka_fr3_v2/scene_docking.xml`，其中的对接件 STL 已获作者授权，来源、
 用途与接触建模边界记录在 `THIRD_PARTY_NOTICES.md`。仿真直接以该 STL 网格生成 MuJoCo 原生
-SDF 接触几何，因此可保留其非凸对接轮廓；该实验验证的是刚体接触下的柔顺接近与保持，不代表完整机械锁止结构的有限元或公差级复现。
+SDF 接触几何，因此可保留其非凸对接轮廓；公端可视网格、SDF 碰撞网格和母端坐标系均使用同一 40° 安装偏航，母端另绕插入轴错开 45° 以形成键槽互补配合。该实验验证的是刚体接触下的柔顺接近与保持，不代表完整机械锁止结构的有限元或公差级复现。
 
 ## 执行器模型边界
 

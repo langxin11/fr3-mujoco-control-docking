@@ -128,7 +128,12 @@ def task_space_impedance(
     target_twist: np.ndarray,
     target_acceleration: np.ndarray,
     external_wrench: np.ndarray,
-) -> np.ndarray:
+    dt: float = SIM.control_dt,
+    prev_qd: np.ndarray | None = None,
+    prev_twist: np.ndarray | None = None,
+    prev_jacobian: np.ndarray | None = None,
+    q_nullspace: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """计算带外力反馈与零空间姿态保持的六维操作空间阻抗转矩。
 
     阻抗关系为 ``M_d (xdd-xdd_d)+D_d (xd-xd_d)+K_d (x-x_d)=F_ext``。
@@ -140,10 +145,23 @@ def task_space_impedance(
     该公式为 Ren & Shan (2026) Eq. (29) 在刚度矩阵取对角形式时的退化，
     保证了各自由度的闭环响应均处于临界阻尼状态，无需逐任务调参。
     外力为世界坐标系下的工具接触力/力矩。
+
+    Args:
+        dt: 控制周期，用于有限差分估计 J̇ q̇。
+        prev_qd: 上一控制周期的关节速度，初次调用时传入 ``None``。
+        prev_twist: 上一控制周期的末端旋量，初次调用时传入 ``None``。
+        prev_jacobian: 上一控制周期的几何雅可比，用于直接差分 J̇。
+        q_nullspace: 零空间姿态保持的目标关节角，默认使用 ``SIM.home_q``。
+            在对接等任务中应传入参考关节轨迹 ``q_ref``，避免零空间将关节
+            拉离 IK 解，导致操作空间跟踪误差。
+
+    Returns:
+        ``(desired_torque, current_qd, current_twist, current_jacobian)``
+        —— 调用方需将后三个返回值作为下一周期的对应 ``prev_*`` 参数。
     """
     position, rotation = site_pose(data, ids.site)
     jacobian = site_jacobian(model, data, ids.site, ids.joint_dof)
-    qd = data.qvel[ids.joint_dof]
+    qd = data.qvel[ids.joint_dof].copy()
     current_twist = jacobian @ qd
     pose_error = np.r_[
         target_position - position,
@@ -157,8 +175,10 @@ def task_space_impedance(
         operational_inverse + DOCKING.operational_damping**2 * np.eye(6)
     )
     # 自适应刚度：接触力越大 → 刚度越低 → 更柔顺（Ren & Shan 2026 Eq. 37-38）。
+    # 使用缩放 sigmoid 使自由空间 (‖F_ext‖ ≈ 0) 保持全刚度，
+    # 大接触力下刚度渐近 min_stiffness。
     contact_magnitude = float(np.linalg.norm(external_wrench))
-    alpha = sigmoid(DOCKING.adaptive_stiffness_gain * contact_magnitude)
+    alpha = 2.0 * sigmoid(DOCKING.adaptive_stiffness_gain * contact_magnitude) - 1.0
     effective_stiffness = np.clip(
         (1.0 - alpha) * DOCKING.stiffness, DOCKING.min_stiffness, DOCKING.stiffness
     )
@@ -170,12 +190,25 @@ def task_space_impedance(
         + (external_wrench + effective_stiffness * pose_error + damping * velocity_error)
         / DOCKING.virtual_mass
     )
+    # --- J̇ q̇ 补偿 ---
+    # 任务空间加速度满足 ẍ = J q̈ + J̇ q̇。当前阻抗律仅前馈 ẍ_d，
+    # 未包含实际 J̇ q̇，导致该项以 M_d · (J̇ q̇) 的等效外力扰动形式
+    # 进入误差动态，在末端速度较大时产生显著跟踪偏差。
+    # 通过对几何雅可比直接差分估计 J̇ ≈ (J_k − J_{k−1}) / dt，
+    # 然后 J̇ q̇ ≈ J̇ @ q̇_{k−1}，从指令加速度中扣除。
+    if prev_jacobian is not None and prev_qd is not None:
+        jacobian_dot = (jacobian - prev_jacobian) / dt
+        jdq = jacobian_dot @ prev_qd
+        commanded_acceleration = commanded_acceleration - jdq
+    # ---
     task_wrench = operational_inertia @ commanded_acceleration
     dynamically_consistent_inverse = inverse_mass_jacobian_t @ operational_inertia
     nullspace = np.eye(7) - dynamically_consistent_inverse @ jacobian
     q = data.qpos[ids.joint_qpos]
-    posture_torque = DOCKING.nullspace_stiffness * (SIM.home_q - q) - DOCKING.nullspace_damping * qd
-    return jacobian.T @ task_wrench + data.qfrc_bias[ids.joint_dof] + nullspace.T @ posture_torque
+    q_ns = q_nullspace if q_nullspace is not None else SIM.home_q
+    posture_torque = DOCKING.nullspace_stiffness * (q_ns - q) - DOCKING.nullspace_damping * qd
+    torque = jacobian.T @ task_wrench + data.qfrc_bias[ids.joint_dof] + nullspace.T @ posture_torque
+    return torque, qd, current_twist, jacobian.copy()
 
 
 @dataclass

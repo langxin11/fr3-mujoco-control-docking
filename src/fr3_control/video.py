@@ -11,8 +11,30 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy.spatial.transform import Rotation
 
-from .config import RESULTS_DIR, VIDEO_DIR
+from .config import DOCKING_INTERFACE_MODEL_PATH, FIGURES_DIR, RESULTS_DIR, VIDEO_DIR
 from .model import load_docking_model, load_model, reset_docking_home, reset_home
+
+# 以全高清输出：左侧为原生 MuJoCo 渲染区，右侧为实时数据面板。
+VIDEO_WIDTH = 1920
+VIDEO_HEIGHT = 1080
+PANEL_WIDTH = 480
+ROBOT_WIDTH = VIDEO_WIDTH - PANEL_WIDTH
+
+
+def _to_full_hd(image: Image.Image) -> Image.Image:
+    """将片头、片尾或信息面板以高质量采样匹配全高清视频尺寸。"""
+    return image.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
+
+
+def _compose_full_hd(robot: Image.Image, panel: Image.Image) -> Image.Image:
+    """拼接原生 1440×1080 仿真画面与等比例放大的信息面板。"""
+    frame = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT))
+    frame.paste(robot, (0, 0))
+    frame.paste(
+        panel.resize((PANEL_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS),
+        (ROBOT_WIDTH, 0),
+    )
+    return frame
 
 
 def _add_polyline(
@@ -232,8 +254,15 @@ def _docking_title_frame() -> Image.Image:
         (480, 145), "Franka FR3 compliant docking", anchor="mm", fill="#172b4d", font=_font(38)
     )
     draw.text(
-        (480, 210),
-        "Rigid computed-torque vs. operational-space impedance",
+        (480, 190),
+        "Joint-space inverse-dynamics tracking",
+        anchor="mm",
+        fill="#344563",
+        font=_font(22),
+    )
+    draw.text(
+        (480, 225),
+        "vs. Cartesian-space impedance control",
         anchor="mm",
         fill="#344563",
         font=_font(22),
@@ -261,7 +290,9 @@ def _docking_summary_frame() -> Image.Image:
     for row, item in enumerate(summaries):
         y = 220 + row * 95
         values = (
-            "Rigid CTC" if item["controller"] == "ctc" else "Impedance",
+            "Joint-space\ninverse dynamics"
+            if item["controller"] == "ctc"
+            else "Cartesian-space\nimpedance",
             f"{item['peak_contact_force_n']:.2f} N",
             f"{item['steady_contact_force_n']:.2f} N",
             f"{item['ee_final_mm']:.2f} mm",
@@ -278,7 +309,7 @@ def _docking_summary_frame() -> Image.Image:
     )
     draw.text(
         (480, 475),
-        f"Impedance control reduces peak contact force by {reduction:.1f}%.",
+        f"Cartesian-space impedance reduces peak contact force by {reduction:.1f}%.",
         anchor="mm",
         fill="#1f7a3b",
         font=_font(20),
@@ -302,19 +333,19 @@ def render_video(run_name: str = "all", output: Path | None = None, fps: int = 2
     model, ids = load_model()
     data = mujoco.MjData(model)
     reset_home(model, data, ids)
-    renderer = mujoco.Renderer(model, height=540, width=720)
+    renderer = mujoco.Renderer(model, height=VIDEO_HEIGHT, width=ROBOT_WIDTH)
     writer = imageio.get_writer(
         output,
         fps=fps,
         codec="libx264",
-        bitrate="900k",
+        bitrate="8M",
         quality=None,
         ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
         macro_block_size=None,
     )
     try:
         if run_name == "all":
-            title = np.asarray(_title_frame())
+            title = np.asarray(_to_full_hd(_title_frame()))
             for _ in range(5 * fps):
                 writer.append_data(title)
             runs = ("pd_nominal", "ctc_nominal", "pd_disturbance", "ctc_disturbance")
@@ -351,12 +382,10 @@ def render_video(run_name: str = "all", output: Path | None = None, fps: int = 2
                 )
                 robot = Image.fromarray(renderer.render())
                 panel = _side_panel(log["time"], error_mm, orientation_error_deg, int(index), label)
-                frame = Image.new("RGB", (960, 540))
-                frame.paste(robot, (0, 0))
-                frame.paste(panel, (720, 0))
+                frame = _compose_full_hd(robot, panel)
                 writer.append_data(np.asarray(frame))
         if run_name == "all":
-            summary = np.asarray(_summary_frame())
+            summary = np.asarray(_to_full_hd(_summary_frame()))
             for _ in range(8 * fps):
                 writer.append_data(summary)
     finally:
@@ -366,25 +395,25 @@ def render_video(run_name: str = "all", output: Path | None = None, fps: int = 2
 
 
 def render_docking_video(output: Path | None = None, fps: int = 24) -> Path:
-    """渲染刚性 CTC 与阻抗控制的 FR3 柔顺对接对比视频。"""
+    """渲染关节空间逆动力学与笛卡尔空间阻抗控制的对接对比视频。"""
     output = output or VIDEO_DIR / "fr3_compliant_docking.mp4"
     output.parent.mkdir(parents=True, exist_ok=True)
     model, ids = load_docking_model()
     # 授权 STL 的局部薄面会产生锯齿状投影；对接视频关闭阴影以突出接触过程。
     model.vis.quality.shadowsize = 0
     data = mujoco.MjData(model)
-    renderer = mujoco.Renderer(model, height=540, width=720)
+    renderer = mujoco.Renderer(model, height=VIDEO_HEIGHT, width=ROBOT_WIDTH)
     writer = imageio.get_writer(
         output,
         fps=fps,
         codec="libx264",
-        bitrate="1000k",
+        bitrate="8M",
         quality=None,
         ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
         macro_block_size=None,
     )
     try:
-        title = np.asarray(_docking_title_frame())
+        title = np.asarray(_to_full_hd(_docking_title_frame()))
         for _ in range(4 * fps):
             writer.append_data(title)
         for selected in ("docking_ctc", "docking_impedance"):
@@ -395,7 +424,11 @@ def render_docking_video(output: Path | None = None, fps: int = 24) -> Path:
             frame_indices = np.searchsorted(log["time"], frame_times).clip(0, log["time"].size - 1)
             error_mm = 1e3 * np.linalg.norm(log["ee_error"], axis=1)
             contact_force = np.linalg.norm(log["contact_wrench"][:, :3], axis=1)
-            label = "RIGID CTC" if selected.endswith("ctc") else "OPERATIONAL-SPACE IMPEDANCE"
+            label = (
+                "JOINT-SPACE ID TRACKING"
+                if selected.endswith("ctc")
+                else "CARTESIAN IMPEDANCE"
+            )
             for index in frame_indices:
                 data.qpos[ids.joint_qpos] = log["q"][index]
                 data.qvel[ids.joint_dof] = log["qd"][index]
@@ -420,14 +453,28 @@ def render_docking_video(output: Path | None = None, fps: int = 24) -> Path:
                     int(index),
                     label,
                 )
-                frame = Image.new("RGB", (960, 540))
-                frame.paste(robot, (0, 0))
-                frame.paste(panel, (720, 0))
+                frame = _compose_full_hd(robot, panel)
                 writer.append_data(np.asarray(frame))
-        summary = np.asarray(_docking_summary_frame())
+        summary = np.asarray(_to_full_hd(_docking_summary_frame()))
         for _ in range(7 * fps):
             writer.append_data(summary)
     finally:
         writer.close()
+        renderer.close()
+    return output
+
+
+def render_docking_interface_preview(output: Path | None = None) -> Path:
+    """渲染无机械臂的公母接口对中检查图。"""
+    output = output or FIGURES_DIR / "docking_interface_alignment.png"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    model = mujoco.MjModel.from_xml_path(str(DOCKING_INTERFACE_MODEL_PATH))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    renderer = mujoco.Renderer(model, height=1080, width=1440)
+    try:
+        renderer.update_scene(data, camera="interface_report")
+        imageio.imwrite(output, renderer.render())
+    finally:
         renderer.close()
     return output
