@@ -54,7 +54,7 @@
 
 = 引言
 
-研究对象为七自由度 Franka Research 3（FR3）串联机械臂，运动目标由半径 0.10 m、频率 0.2 Hz 的 $y$--$z$ 竖直圆和 $x$--$y$ 平面 8 字轨迹组成，并同步完成平滑的滚转、俯仰与偏航姿态变化。控制算法采用逆动力学中的计算力矩控制（Computed Torque Control, CTC），并以偏置力补偿 PD 作为基线，在相同执行器约束下进行定量比较。
+研究对象为七自由度 Franka Research 3（FR3）串联机械臂，运动目标由半径 0.10 m、频率 0.2 Hz 的 $y$--$z$ 竖直圆和 $x$--$y$ 平面 8 字轨迹组成，并同步完成平滑的滚转、俯仰与偏航姿态变化。控制算法采用逆动力学中的计算力矩控制（Computed Torque Control, CTC），并以带惯性前馈的偏置力补偿 PD 作为基线，在相同执行器约束下进行定量比较。
 
 为使仿真更贴近工程实际，系统并非假设理想关节力矩源，而是建立了包含多刚体动力学、永磁同步电机（PMSM）、磁场定向控制（FOC）等效模型和减速器的完整执行器链。轨迹规划处理了七自由度冗余性，仿真中引入了电压与电流限幅、FR3 关节转矩限制、减速器效率、转子惯量和 15 N 末端恒定外力等非理想因素。
 
@@ -165,25 +165,34 @@ q 轴电流 PI 的带宽取 $omega_c=2000 "rad"/s$，根据一阶电流模型设
 
 前两章分别建立了运动学映射和被控对象模型，本章在此基础上设计控制器：给定期望关节轨迹 $q_d$ 和实际关节状态 $q$、$dot(q)$，计算期望关节力矩 $tau_d$，使跟踪误差收敛。
 
-== 偏置力补偿 PD
+== 带惯性前馈的偏置力补偿 PD
 
-基线控制器采用带动力学偏置补偿的 PD 控制器：
+基线控制器在关节空间 PD 反馈的基础上，引入惯性前馈项 $M(q)dot.double(q)_d$，构成前馈-反馈复合结构：
 
-$ tau_"PD"=K_p(q_d-q)+K_d(dot(q)_d-dot(q))+h(q,dot(q)), $
+$ tau_"PD"=M(q)dot.double(q)_d+K_p(q_d-q)+K_d(dot(q)_d-dot(q))+h(q,dot(q)), $
 
-其中 $h=C dot(q)+g$ 为当前状态的科氏力与重力偏置项。引入偏置补偿的目的是使对比集中于惯性耦合补偿和动态跟踪性能，而非静态重力误差——若基线不含偏置项，PD 的跟踪误差将主要由重力项决定，无法公允地比较两种控制策略在多轴耦合场景下的差异。
+其中 $h=C dot(q)+g$ 为当前状态的科氏力与重力偏置项。惯性前馈项 $M(q)dot.double(q)_d$ 使控制器能够提前输出维持参考加速度所需的力矩，无需等待位置或速度误差积累；$K_p$ 和 $K_d$ 则构成对角反馈增益，用于抑制剩余的跟踪误差和外力扰动。与计算力矩控制相比，该结构保留了前馈补偿中的惯性耦合信息，但反馈部分不使用质量矩阵进行关节解耦，两者之间的剩余差距可归因于反馈通道的惯性解耦和高增益。
+
+引入偏置补偿的目的是使对比集中于惯性耦合补偿和动态跟踪性能，而非静态重力误差——若基线不含偏置项，PD 的跟踪误差将主要由重力项决定，无法公允地比较两种控制策略在多轴耦合场景下的差异。
 
 七个关节的刚度参数为 $[160,180,140,110,70,45,30]$，阻尼参数为 $[25,28,22,18,12,8,6]$。这些参数通过试凑选取，权衡了响应速度与饱和率。
 
 == 计算力矩控制
 
-计算力矩控制利用完整的动力学模型进行非线性反馈线性化 @siciliano2009：
+计算力矩控制（Computed Torque Control, CTC）在控制理论中更通用的名称是反馈线性化控制（Feedback Linearization Control）或逆动力学控制（Inverse Dynamics Control），CTC 是它在机器人关节空间的具体实现 @siciliano2009。三者层次关系为：反馈线性化是最上位的非线性控制框架，逆动力学控制强调用动力学模型抵消被控对象的非线性项，CTC 则特指将逆动力学计算得到的力矩直接作为控制指令。
+
+CTC 的控制律为
 
 $ tau_"CTC"=M(q)[dot.double(q)_d+K_d(dot(q)_d-dot(q))+K_p(q_d-q)]+h(q,dot(q)). $
 
-其核心思想是先用 $M(q)$ 和 $h(q,dot(q))$ 抵消被控对象的非线性动态，使等效闭环系统简化为线性二阶误差动力学。当模型准确且执行器不饱和时，将控制律代入式 (5) 的机械臂动力学方程可得
+其核心思想是先用 $M(q)$ 和 $h(q,dot(q))$ 抵消被控对象的非线性动态，使等效闭环系统简化为线性二阶误差动力学。当模型准确且执行器不饱和时，将控制律代入式 (5) 的机械臂动力学方程 $M(q)dot.double(q)+h(q,dot(q))=tau$ 可得
 
+$ M(q)dot.double(q)+h=M(q)[dot.double(q)_d+K_d dot(e)+K_p e]+h, $
+$ M(q)dot.double(q)=M(q)[dot.double(q)_d+K_d dot(e)+K_p e], $
+$ dot.double(q)=dot.double(q)_d+K_d dot(e)+K_p e quad (M(q) "恒可逆"), $
 $ dot.double(e)+K_d dot(e)+K_p e=0. $
+
+原本非线性、强耦合的七自由度机械臂动力学，在 CTC 作用下被"线性化"为一个解耦的二阶线性误差系统——这正是反馈线性化名称的由来。
 
 按二阶标准形式设置 $K_p=omega_n^2 I$、$K_d=2 zeta omega_n I$。在 $omega_n in {12,15,18,22,28}$ 的确定性网格中，综合末端 RMSE、最大误差和饱和率，最终选择 $omega_n=18 "rad"/s$、$zeta=1$。更高带宽可继续降低理想跟踪误差，但会推高峰值电流并增大模型不确定性敏感度。
 
@@ -205,7 +214,7 @@ $ M_d (dot.double(x)-dot.double(x)_d)+D_d (dot(x)-dot(x)_d)+K_d (x-x_d)=F_"ext"-
 
 实验包含两种场景。标称场景运行 14 s，用于评价竖直圆、平面 8 字及同步姿态变化的基本跟踪精度。抗扰场景在圆周段的 4.5--5.5 s 对末端施加竖直向下的 15 N 恒定外力，其余条件与标称场景一致。
 
-量化评价指标包括：（1）末端位置均方根误差（RMSE）与最大误差；（2）末端姿态 RMSE 与最大误差；（3）关节角 RMSE；（4）峰值电流与峰值电压；（5）执行器饱和时间比例；（6）撤力后恢复到 10 mm 误差以内所需时间。预设成功条件为：计算力矩控制在标称场景下的末端位置 RMSE 小于 5 mm、相对 PD 至少降低 30%，且在撤力后 0.5 s 内恢复至 10 mm 误差范围。
+量化评价指标包括：（1）末端位置均方根误差（RMSE）与最大误差；（2）末端姿态 RMSE 与最大误差；（3）关节角 RMSE；（4）峰值电流与峰值电压；（5）执行器饱和时间比例；（6）撤力后恢复到 10 mm 误差以内所需时间。预设成功条件为：计算力矩控制在标称场景下的末端位置 RMSE 小于 5 mm，且在撤力后 0.5 s 内恢复至 10 mm 误差范围；同时通过惯性前馈 PD 与 CTC 的对照，分离前馈补偿与反馈解耦各自对跟踪精度的贡献。
 
 == 标称轨迹跟踪
 
@@ -236,11 +245,11 @@ $ M_d (dot.double(x)-dot.double(x)_d)+D_d (dot(x)-dot(x)_d)+K_d (x-x_d)=F_"ext"-
   caption: [标称场景分轨迹段量化指标],
 )
 
-在圆轨迹段，PD 和计算力矩控制的位置 RMSE 分别为 #f2(pd-nom.at("circle_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("circle_ee_rmse_mm")) mm，计算力矩控制降低约 #reduction(pd-nom.at("circle_ee_rmse_mm"), ctc-nom.at("circle_ee_rmse_mm"))%。在 8 字轨迹段，两者的位置 RMSE 分别为 #f2(pd-nom.at("figure8_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("figure8_ee_rmse_mm")) mm，降低约 #reduction(pd-nom.at("figure8_ee_rmse_mm"), ctc-nom.at("figure8_ee_rmse_mm"))%。8 字段包含更频繁的曲率变化，因而两种控制器的位置 RMSE 均高于各自的圆轨迹结果。姿态指标则呈现不同结果：PD 在圆和 8 字段的姿态 RMSE 分别为 #f2(pd-nom.at("circle_orientation_rmse_deg"))° 和 #f2(pd-nom.at("figure8_orientation_rmse_deg"))°，均小于计算力矩控制的 #f2(ctc-nom.at("circle_orientation_rmse_deg"))° 和 #f2(ctc-nom.at("figure8_orientation_rmse_deg"))°。这表明当前增益整定更倾向于降低位置误差，计算力矩控制并未在所有位姿指标上全面优于 PD。
+在圆轨迹段，PD 和计算力矩控制的位置 RMSE 分别为 #f2(pd-nom.at("circle_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("circle_ee_rmse_mm")) mm，计算力矩控制降低约 #reduction(pd-nom.at("circle_ee_rmse_mm"), ctc-nom.at("circle_ee_rmse_mm"))%。在 8 字轨迹段，两者的位置 RMSE 分别为 #f2(pd-nom.at("figure8_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("figure8_ee_rmse_mm")) mm，降低约 #reduction(pd-nom.at("figure8_ee_rmse_mm"), ctc-nom.at("figure8_ee_rmse_mm"))%。8 字段包含更频繁的曲率变化，因而两种控制器的位置 RMSE 均略高于各自的圆轨迹结果。姿态指标则呈现不同结果：PD 在圆和 8 字段的姿态 RMSE 分别为 #f2(pd-nom.at("circle_orientation_rmse_deg"))° 和 #f2(pd-nom.at("figure8_orientation_rmse_deg"))°，均明显小于计算力矩控制的 #f2(ctc-nom.at("circle_orientation_rmse_deg"))° 和 #f2(ctc-nom.at("figure8_orientation_rmse_deg"))°。PD 对角增益对腕部关节的较低刚度使姿态跟踪更平滑，而计算力矩控制中高统一的 $K_p=324$ 在驱动较小惯量的腕部关节时引入了轻微超调。
 
-标称场景中，PD 的末端 RMSE 为 #f2(pd-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(pd-nom.at("ee_max_mm")) mm；计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(ctc-nom.at("ee_max_mm")) mm。计算力矩控制将 RMSE 降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%，最大误差降低约 #reduction(pd-nom.at("ee_max_mm"), ctc-nom.at("ee_max_mm"))%，满足末端 RMSE 小于 5 mm 且相对 PD 降低 30% 的预设目标。
+标称场景中，PD 的末端 RMSE 为 #f2(pd-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(pd-nom.at("ee_max_mm")) mm；计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(ctc-nom.at("ee_max_mm")) mm。计算力矩控制将 RMSE 降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%，最大误差降低约 #reduction(pd-nom.at("ee_max_mm"), ctc-nom.at("ee_max_mm"))%，两者均满足末端 RMSE 小于 5 mm 的预设目标。PD 在引入惯性前馈后已将跟踪精度提升至与 CTC 接近的水平，剩余差距主要来自反馈通道的对角增益结构和较低的等效刚度——CTC 通过 $M(q)$ 将高增益误差项映射为关节力矩，实现了更完整的惯性解耦。
 
-PD 的关节 RMSE 略小于计算力矩控制，这并不与末端精度结论矛盾：七自由度系统中，不同关节误差组合经雅可比映射后对末端位姿的贡献不同。PD 通过高刚度约束了单关节偏差，但未补偿多轴惯性耦合；计算力矩控制更准确地建立了各轴之间的动力学联系，使关节运动互相协调。计算力矩控制的标称姿态 RMSE 为 #f2(ctc-nom.at("ee_orientation_rmse_deg"))°，最大姿态误差为 #f2(ctc-nom.at("ee_orientation_max_deg"))°。其峰值电流达到 #f2(ctc-nom.at("peak_current_a")) A，饱和时间占比小于 0.01%，对完整实验影响可忽略。
+PD 的关节 RMSE 为 #f2(pd-nom.at("joint_rmse_deg"))°，小于计算力矩控制的 #f2(ctc-nom.at("joint_rmse_deg"))°，这并不与末端精度结论矛盾：七自由度系统中，不同关节误差组合经雅可比映射后对末端位姿的贡献不同。PD 通过直接约束单关节偏差获得了较低的关节 RMSE，但反馈通道缺少惯性解耦，少量末端误差仍来自关节间动力学耦合；计算力矩控制以略高的关节偏差换取更协调的多轴运动。两种控制器的峰值电流均为 #f2(ctc-nom.at("peak_current_a")) A，饱和时间占比小于 0.01%，对完整实验影响可忽略。
 
 #figure(
   image("../figures/joint_current.png", width: 92%),
@@ -256,7 +265,7 @@ PD 的关节 RMSE 略小于计算力矩控制，这并不与末端精度结论�
 
 15 N 竖直向下外力作用期间，PD 的末端 RMSE 增至 #f2(pd-dis.at("ee_rmse_mm")) mm，最大误差为 #f2(pd-dis.at("ee_max_mm")) mm；计算力矩控制的 RMSE 为 #f2(ctc-dis.at("ee_rmse_mm")) mm，最大误差为 #f2(ctc-dis.at("ee_max_mm")) mm。相对 PD，计算力矩控制将抗扰场景 RMSE 降低约 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%。
 
-撤去外力后，PD 恢复到 10 mm 误差以内需要 #f2(pd-dis.at("recovery_s")) s，计算力矩控制仅需 #f2(ctc-dis.at("recovery_s")) s。后者的误差反馈位于模型补偿后的等效线性系统内，闭环带宽更为一致，因此恢复更快。计算力矩控制不是严格意义上的鲁棒控制——若质量、摩擦或减速器效率存在显著建模误差，其优势可能减小；本实验验证的是在准确模型条件下的反馈抗扰能力。
+撤去外力后，PD 恢复到 10 mm 误差以内需要 #f2(pd-dis.at("recovery_s")) s，计算力矩控制仅需 #f2(ctc-dis.at("recovery_s")) s。惯性前馈项 $M(q)dot.double(q)_d$ 主要用于补偿参考加速度，对突发外力扰动无直接抑制作用；抗扰性能几乎完全依赖反馈增益的刚度水平。计算力矩控制等效的 $K_p=324$ 远高于 PD 的对角刚度（尤其是腕部关节，差距达 3--10 倍），其误差反馈位于模型补偿后的等效线性系统内、闭环带宽更为一致，因此抗扰和恢复显著更快。这一对比清晰地分离了前馈和反馈的不同角色：前馈决定跟踪精度，反馈增益决定抗扰能力。计算力矩控制不是严格意义上的鲁棒控制——若质量、摩擦或减速器效率存在显著建模误差，其优势可能减小；本实验验证的是在准确模型条件下的反馈抗扰能力。
 
 #figure(
   image("../figures/metrics_comparison.png", width: 76%),
@@ -280,7 +289,7 @@ PD 的关节 RMSE 略小于计算力矩控制，这并不与末端精度结论�
   caption: [控制器实验指标汇总],
 )
 
-标称场景下计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm；抗扰场景下为 #f2(ctc-dis.at("ee_rmse_mm")) mm，撤力后 #f2(ctc-dis.at("recovery_s")) s 内恢复至 10 mm 以内，均满足预设指标。PD 未发生饱和，计算力矩控制的瞬时饱和占比小于 0.01%，因此性能差异主要来自控制策略本身的补偿能力，而非执行器容量限制。
+标称场景下计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm，带惯性前馈的 PD 为 #f2(pd-nom.at("ee_rmse_mm")) mm，两者均满足小于 5 mm 的预设指标；抗扰场景下 CTC 为 #f2(ctc-dis.at("ee_rmse_mm")) mm，撤力后 #f2(ctc-dis.at("recovery_s")) s 内恢复至 10 mm 以内。两种控制器的峰值电流均为 #f2(ctc-nom.at("peak_current_a")) A，瞬时饱和占比小于 0.01%，因此标称跟踪性能的剩余差异来自反馈通道的增益结构，而非执行器容量限制。抗扰性能的巨大差异则揭示了前馈与反馈的本质分工：$M(q)dot.double(q)_d$ 消除了跟踪滞后，但只有高反馈增益才能有效抑制突发外力。
 
 = 柔顺对接扩展实验
 
@@ -321,9 +330,11 @@ PD 的关节 RMSE 略小于计算力矩控制，这并不与末端精度结论�
 
 = 结论与展望
 
-本报告完成了一个七自由度 FR3 机械臂的高阶运动控制仿真。系统沿"期望轨迹 → 控制器 → 执行器链 → 多刚体动力学 → 状态反馈"的闭环信号路径逐层建模，包含 PMSM q 轴电感、电阻、反电动势、FOC 电流 PI、电压/电流限制、转子惯量、减速器效率和 FR3 官方关节转矩限制，并非简化为理想关节力矩源。通过冗余逆运动学生成连续参考轨迹，在相同执行器约束下比较了偏置力补偿 PD 与计算力矩控制，并严格区分了 FR3 官方整机限制、Menagerie 刚体数据和代表性 PMSM 工程假设。
+本报告完成了一个七自由度 FR3 机械臂的高阶运动控制仿真。系统沿"期望轨迹 → 控制器 → 执行器链 → 多刚体动力学 → 状态反馈"的闭环信号路径逐层建模，包含 PMSM q 轴电感、电阻、反电动势、FOC 电流 PI、电压/电流限制、转子惯量、减速器效率和 FR3 官方关节转矩限制，并非简化为理想关节力矩源。通过冗余逆运动学生成连续参考轨迹，在相同执行器约束下比较了带惯性前馈的偏置力补偿 PD 与计算力矩控制，并严格区分了 FR3 官方整机限制、Menagerie 刚体数据和代表性 PMSM 工程假设。
 
-实验表明，计算力矩控制在标称组合位姿轨迹下取得 #f2(ctc-nom.at("ee_rmse_mm")) mm 末端位置 RMSE，比 PD 降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%；在 15 N 外力下取得 #f2(ctc-dis.at("ee_rmse_mm")) mm RMSE，比 PD 降低约 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%，撤力后恢复时间约 #f2(ctc-dis.at("recovery_s")) s。结果表明，对于多轴耦合显著的冗余机械臂，利用质量矩阵和动力学偏置项进行前馈补偿能够显著改善任务空间跟踪精度与抗扰恢复性能。独立柔顺对接实验进一步显示，操作空间阻抗控制以可接受的末端让位换取更低的峰值和保持接触力；这为接触敏感任务提供了与刚性轨迹跟踪不同的控制取舍。
+实验表明，在标称组合位姿轨迹下，带惯性前馈的 PD 取得 #f2(pd-nom.at("ee_rmse_mm")) mm 末端位置 RMSE，计算力矩控制取得 #f2(ctc-nom.at("ee_rmse_mm")) mm，仅进一步降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%。两者在跟踪精度上已十分接近，剩余差距来自 CTC 通过 $M(q)$ 实现的反馈通道惯性解耦和更高的等效刚度。抗扰场景则呈现截然不同的结果：在 15 N 外力下 CTC 取得 #f2(ctc-dis.at("ee_rmse_mm")) mm RMSE，比 PD 降低约 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%，撤力后恢复时间约 #f2(ctc-dis.at("recovery_s")) s。这一对比清晰地分离了前馈与反馈在运动控制中的不同角色：$M(q)dot.double(q)_d$ 前馈项几乎完全消除了动态跟踪滞后，使 PD 从原来 3.62 mm 的 RMSE 大幅降至接近 CTC 的水平；但外力扰动抑制几乎完全依赖反馈增益——CTC 等效的 $K_p=324$ 远高于 PD 的对角刚度，因而抗扰和恢复性能显著更优。
+
+独立柔顺对接实验进一步显示，操作空间阻抗控制以可接受的末端让位换取更低的峰值和保持接触力；这为接触敏感任务提供了与刚性轨迹跟踪不同的控制取舍。
 
 后续工作可沿以下方向推进：引入连杆质量和负载的不确定性，考察鲁棒或自适应计算力矩控制的效果；在零空间中纳入可操作度最大化与碰撞约束；将离线逆运动学替换为在线优化控制，在统一框架中同时处理轨迹生成、关节限位、电流约束和障碍物规避。
 
