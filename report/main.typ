@@ -315,13 +315,31 @@ PD 的关节 RMSE 为 #f2(pd-nom.at("joint_rmse_deg"))°，小于计算力矩控
 
 在不改变上述组合轨迹实验的前提下，另建独立的 `scene_docking.xml`。末端和固定端均使用经原作者授权的对接件网格 @langxin2026docking；MuJoCo 以该 STL 直接生成原生 SDF 碰撞几何，从而保留非凸键槽轮廓及多点接触。该刚体接触模型用于评估柔顺接近、法向接触和保持力，不宣称复刻完整锁止机构的材料变形、公差和有限元细节。
 
-对接总时长为 11 s：0--1 s 保持初始位姿，1--5 s 沿工具坐标系 z 轴靠近，5--7 s 从 55 mm 端面间距受控插入至 45 mm，7--11 s 保持。首次 SDF 接触出现后，位置参考锁定在该接触位姿，7 N 虚拟保持力在 0.4 s 内按五次时间缩放升起；网格接触柔顺性使稳态实际保持力约为 2 N。评价峰值/保持段接触力、最终位姿偏差、接触起始时刻和保持段接触比例；保持段接触比例不低于 90% 视为完成对接。
+对接总时长为 11 s：0--1 s 保持初始位姿，1--5 s 沿工具坐标系 z 轴靠近，5--7 s 从 55 mm 端面间距受控插入至 45 mm，7--11 s 保持。首次 SDF 接触出现后，位置参考锁定在该接触位姿，7 N 虚拟保持力在 0.4 s 内按五次时间缩放升起。阻抗控制器采用 §5.3 所述的 $Lambda$ 基临界阻尼和 sigmoid 自适应刚度（$k_alpha=0.5$，$K_min$ 平动 30 N/m、转动 8 N·m/rad），在自由空间保持高跟踪刚度、接触后自动柔化以降低冲击力。
+
+参照 Ren & Shan (2026) @ren2026unified 的三层评价体系，指标按 mission 优先级组织：
+
+#figure(
+  table(
+    columns: (1.5cm, 5.0cm, 6.0cm),
+    stroke: 0.5pt,
+    inset: 5pt,
+    align: (center, left, left),
+    table.header([层级], [指标], [判据]),
+    [物理交互安全], [峰值轴向力 $|F_z|_"max"$、稳态轴向力 $|F_z|_"fin"$、稳态接触力均值], [越低越安全；保持段接触 >90% 视为完成],
+    [内部系统安全], [峰值电流、峰值电压、饱和率], [不触发硬件限幅为通过],
+    [任务跟踪性能], [最终位置/姿态偏差], [允许适度偏移以换取柔顺交互],
+  ),
+  caption: [柔顺对接三层评价指标],
+)
+
+评价侧重点与 §6.1 不同：对接不以毫米级跟踪精度为目标——允许的柔顺偏差正是吸收接触冲击、保护工件的手段。
 
 == 接触结果与讨论
 
 #figure(
   image("../figures/docking_contact_response.png", width: 92%),
-  caption: [刚性 CTC 与操作空间阻抗控制的接触力和末端偏差；浅绿色区域为保持段],
+  caption: [刚性 CTC 与自适应阻抗控制的接触力和末端偏差；浅绿色区域为保持段],
 )
 
 #figure(
@@ -342,9 +360,9 @@ PD 的关节 RMSE 为 #f2(pd-nom.at("joint_rmse_deg"))°，小于计算力矩控
   caption: [柔顺对接量化指标],
 )
 
-两种控制器均在保持段维持 100% 接触，因此均通过配置的完成判据。刚性 CTC 的接触始于 #f2(docking-ctc.at("contact_start_s")) s，峰值接触力为 #f2(docking-ctc.at("peak_contact_force_n")) N，保持段均值为 #f2(docking-ctc.at("steady_contact_force_n")) N；阻抗控制在 #f2(docking-impedance.at("contact_start_s")) s 首次接触，峰值和保持段均值分别为 #f2(docking-impedance.at("peak_contact_force_n")) N 与 #f2(docking-impedance.at("steady_contact_force_n")) N。相对刚性 CTC，阻抗控制将峰值接触力降低约 #reduction(docking-ctc.at("peak_contact_force_n"), docking-impedance.at("peak_contact_force_n"))%，并将保持段压紧力降低约 #reduction(docking-ctc.at("steady_contact_force_n"), docking-impedance.at("steady_contact_force_n"))%。
+两种控制器均通过配置的完成判据。刚性 CTC 的接触始于 #f2(docking-ctc.at("contact_start_s")) s，峰值接触力为 #f2(docking-ctc.at("peak_contact_force_n")) N，保持段均值为 #f2(docking-ctc.at("steady_contact_force_n")) N——其闭环仅提供 $Lambda^(-1)F_"ext"$ 的纯惯性响应，接触力主要由非凸网格几何和物理参数决定。阻抗控制在 #f2(docking-impedance.at("contact_start_s")) s 首次接触，峰值和保持段均值分别为 #f2(docking-impedance.at("peak_contact_force_n")) N 与 #f2(docking-impedance.at("steady_contact_force_n")) N。得益于 sigmoid 自适应刚度在接触后自动将 $K_r$ 从 100/25 柔化至接近 $K_min$（30/8），相对刚性 CTC，阻抗控制将峰值接触力降低约 #reduction(docking-ctc.at("peak_contact_force_n"), docking-impedance.at("peak_contact_force_n"))%，并将保持段压紧力降低约 #reduction(docking-ctc.at("steady_contact_force_n"), docking-impedance.at("steady_contact_force_n"))%。与之前固定刚度方案（阻尼手调，峰值力 7.87 N）相比，$Lambda$ 基临界阻尼与自适应刚度的组合进一步压缩了峰值力和稳态接触力。
 
-代价是阻抗控制的最终位置偏差为 #f2(docking-impedance.at("ee_final_mm")) mm，高于刚性 CTC 的 #f2(docking-ctc.at("ee_final_mm")) mm。这不是跟踪失效：在有意设定的小虚拟刚度下，偏差正是吸收接触过量和限制压紧力的柔顺位移。该结果说明对接任务不能只以末端位置误差排序；若对接件或环境脆弱，较小峰值接触力和稳定保持通常比刚性贴合更关键。
+代价是阻抗控制的最终位置偏差为 #f2(docking-impedance.at("ee_final_mm")) mm，高于刚性 CTC 的 #f2(docking-ctc.at("ee_final_mm")) mm。这不是跟踪失效：在有意设定的低刚度下，偏差正是吸收接触过量和限制压紧力的柔顺位移。该结果说明对接任务不能只以末端位置误差排序；若对接件或环境脆弱，较小峰值接触力和稳定保持比刚性贴合更关键。三层指标中，阻抗控制在"物理交互安全"层全面占优，CTC 在"任务跟踪性能"层靠刚性贴合取得更小偏差，两者在"内部系统安全"层均无饱和——体现了刚性与柔顺两条路线的根本取舍。
 
 = 结论与展望
 
