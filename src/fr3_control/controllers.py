@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+from scipy.special import expit as sigmoid
 from scipy.spatial.transform import Rotation
 
 from .config import DOCKING, SIM
@@ -155,12 +156,18 @@ def task_space_impedance(
     operational_inertia = np.linalg.inv(
         operational_inverse + DOCKING.operational_damping**2 * np.eye(6)
     )
-    # 临界阻尼 D_r = 2 √(diag(Λ) ⊙ K_r)，各 DOF 自适应实际惯性。
+    # 自适应刚度：接触力越大 → 刚度越低 → 更柔顺（Ren & Shan 2026 Eq. 37-38）。
+    contact_magnitude = float(np.linalg.norm(external_wrench))
+    alpha = sigmoid(DOCKING.adaptive_stiffness_gain * contact_magnitude)
+    effective_stiffness = np.clip(
+        (1.0 - alpha) * DOCKING.stiffness, DOCKING.min_stiffness, DOCKING.stiffness
+    )
+    # 临界阻尼 D_r = 2 √(diag(Λ) ⊙ K_r)，各 DOF 自适应实际惯性和当前有效刚度。
     lambda_diag = np.diag(operational_inertia)
-    damping = 2.0 * np.sqrt(lambda_diag * DOCKING.stiffness)
+    damping = 2.0 * np.sqrt(lambda_diag * effective_stiffness)
     commanded_acceleration = (
         target_acceleration
-        + (external_wrench + DOCKING.stiffness * pose_error + damping * velocity_error)
+        + (external_wrench + effective_stiffness * pose_error + damping * velocity_error)
         / DOCKING.virtual_mass
     )
     task_wrench = operational_inertia @ commanded_acceleration
