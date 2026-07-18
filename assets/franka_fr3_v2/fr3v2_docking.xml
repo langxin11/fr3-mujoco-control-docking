@@ -150,9 +150,9 @@
                           <site name="docking_ee_site" size="0.009" rgba="1 0.2 0.1 1"/>
                           <geom name="docking_tool_visual" type="mesh" mesh="docking_part"
                             euler="0 0 0.698132" material="docking_metal" contype="0" conaffinity="0" group="2"/>
-                          <!-- 对接端面的等效刚体接触代理；STL 继续承担可视化。 -->
-                          <geom name="docking_tool_proxy" type="cylinder" pos="0 0 0.0235" size="0.022 0.003"
-                            contype="1" conaffinity="2" group="3"/>
+                          <!-- 授权 STL 网格的原生 SDF 接触面；视觉网格位于上方并不参与碰撞。 -->
+                          <geom name="docking_tool_sdf" type="sdf" mesh="docking_part" contype="1"
+                            conaffinity="2" group="3"/>
                         </body>
                       </body>
                     </body>

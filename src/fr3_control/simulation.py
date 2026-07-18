@@ -360,8 +360,9 @@ def simulate_docking(
         "contact_count": np.zeros(count, dtype=int),
         "controller": controller_name,
     }
-    control_stride = round(SIM.control_dt / SIM.physics_dt)
-    total_steps = round(DOCKING.duration / SIM.physics_dt)
+    physics_dt = model.opt.timestep
+    control_stride = round(SIM.control_dt / physics_dt)
+    total_steps = round(DOCKING.duration / physics_dt)
     desired_torque = np.zeros(7)
     voltage = np.zeros(7)
     current_ref = np.zeros(7)
@@ -369,6 +370,8 @@ def simulate_docking(
     applied_torque = np.zeros(7)
     contact_latched = False
     contact_latch_time = 0.0
+    contact_target: np.ndarray | None = None
+    contact_target_rotation: np.ndarray | None = None
 
     for physics_step in range(total_steps + 1):
         control_index = physics_step // control_stride
@@ -379,6 +382,11 @@ def simulate_docking(
             if contact_count > 0 and not contact_latched:
                 contact_latched = True
                 contact_latch_time = time_value
+                contact_target, contact_target_rotation = site_pose(data, ids.site)
+            if controller_name == "impedance" and contact_target is not None:
+                # 接触后保持首次接触的位姿，由力反馈提供小压紧力，避免继续跟踪预插入轨迹。
+                target = contact_target
+                target_rotation = contact_target_rotation
             if controller_name == "ctc":
                 desired_torque = CONTROLLERS["ctc"](model, data, ids, q_ref, qd_ref, qdd_ref)
             else:
@@ -424,7 +432,7 @@ def simulate_docking(
         if physics_step == total_steps:
             break
         applied_torque, voltage, current_ref, saturated = motor.step(
-            desired_torque, data.qvel[ids.joint_dof].copy(), SIM.physics_dt
+            desired_torque, data.qvel[ids.joint_dof].copy(), physics_dt
         )
         data.ctrl[ids.actuators] = applied_torque
         mujoco.mj_step(model, data)

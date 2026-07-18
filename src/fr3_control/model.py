@@ -78,7 +78,7 @@ def load_model() -> tuple[mujoco.MjModel, ModelIds]:
 def load_docking_model() -> tuple[mujoco.MjModel, DockingModelIds]:
     """加载包含 FR3、对接件、接触对和力/力矩传感器的独立场景。"""
     model = mujoco.MjModel.from_xml_path(str(DOCKING_MODEL_PATH))
-    model.opt.timestep = SIM.physics_dt
+    model.opt.timestep = DOCKING.physics_dt
     joint_ids = np.array(
         [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name) for name in JOINT_NAMES]
     )
@@ -98,9 +98,9 @@ def load_docking_model() -> tuple[mujoco.MjModel, DockingModelIds]:
         socket_site=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "docking_socket_site"),
         force_sensor=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "docking_force_sensor"),
         torque_sensor=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "docking_torque_sensor"),
-        tool_contact_geom=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "docking_tool_proxy"),
+        tool_contact_geom=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "docking_tool_sdf"),
         socket_contact_geom=mujoco.mj_name2id(
-            model, mujoco.mjtObj.mjOBJ_GEOM, "docking_socket_proxy"
+            model, mujoco.mjtObj.mjOBJ_GEOM, "docking_socket_sdf"
         ),
     )
     required = (

@@ -114,15 +114,17 @@ class DockingConfig:
     再靠近至接触距离，随后以小过盈继续插入并保持。
     """
 
+    # SDF 接触场景以 5 kHz 物理积分（每个 1 kHz 控制周期 5 个子步）平衡接触搜索成本和稳定性。
+    physics_dt: float = 2e-4
     duration: float = 11.0
     settle_end: float = 1.0
     approach_end: float = 5.0
     insertion_end: float = 7.0
     start_distance: float = 0.160
-    # STL 经 MuJoCo 规范化后的对接面在工具标记点相距约 65 mm 时开始接触。
+    # 原生 SDF 网格在工具标记点相距约 66 mm 时开始接触；参考保持小过盈并由力反馈限压。
     contact_distance: float = 0.055
     insertion_distance: float = 0.045
-    contact_hold_force: float = 2.0
+    contact_hold_force: float = 7.0
     contact_force_ramp_s: float = 0.4
     virtual_mass: np.ndarray = field(
         default_factory=lambda: np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0], dtype=float)

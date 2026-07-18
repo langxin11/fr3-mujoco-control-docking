@@ -1,7 +1,8 @@
 <mujoco model="fr3v2 compliant docking scene">
   <include file="fr3v2_docking.xml"/>
 
-  <option integrator="implicitfast" cone="elliptic" sdf_iterations="10" sdf_initpoints="40"/>
+  <!-- 对齐接近时以 64 个 Halton 初值、单次投影搜索 SDF 局部接触。 -->
+  <option integrator="implicitfast" cone="elliptic" sdf_iterations="1" sdf_initpoints="64"/>
   <size nconmax="5000" njmax="20000"/>
 
   <visual>
@@ -33,14 +34,15 @@
       <site name="docking_socket_site" size="0.004" rgba="0.1 0.4 1 1"/>
       <geom name="docking_socket_visual" type="mesh" mesh="docking_part" material="docking_metal"
         contype="0" conaffinity="0" group="2"/>
-      <geom name="docking_socket_proxy" type="cylinder" pos="0 0 0.0235" size="0.022 0.003"
-        contype="2" conaffinity="1" group="3"/>
+      <!-- 由授权 STL 网格直接生成的原生 SDF 接触面。 -->
+      <geom name="docking_socket_sdf" type="sdf" mesh="docking_part" contype="2" conaffinity="1"
+        group="3"/>
     </body>
   </worldbody>
 
   <contact>
-    <pair name="docking_contact" geom1="docking_tool_proxy" geom2="docking_socket_proxy" condim="6"
-      friction="0.8 0.008 0.001" solref="0.015 1" solimp="0.92 0.99 0.001 0.5 2" margin="0.001"/>
+    <pair name="docking_contact" geom1="docking_tool_sdf" geom2="docking_socket_sdf" condim="6"
+      friction="0.8 0.008 0.001" solref="0.15 1" solimp="0.92 0.99 0.001 0.5 2" margin="0.001"/>
   </contact>
 
   <sensor>

@@ -42,8 +42,8 @@ uv run fr3-control simulate-docking --controller impedance
 模型目录中。模型的位置执行器被替换为受 FR3 官方关节转矩限制约束的力矩执行器。
 
 柔顺对接使用 `assets/franka_fr3_v2/scene_docking.xml`，其中的对接件 STL 已获作者授权，来源、
-用途与接触简化假设记录在 `THIRD_PARTY_NOTICES.md`。STL 负责外观显示；为稳定复现法向接触力，
-仿真以与端面尺寸匹配的圆柱代理作为碰撞几何，因而该实验验证的是柔顺接触/保持，不代表完整机械锁止结构的有限元或公差级复现。
+用途与接触建模边界记录在 `THIRD_PARTY_NOTICES.md`。仿真直接以该 STL 网格生成 MuJoCo 原生
+SDF 接触几何，因此可保留其非凸对接轮廓；该实验验证的是刚体接触下的柔顺接近与保持，不代表完整机械锁止结构的有限元或公差级复现。
 
 ## 执行器模型边界
 
