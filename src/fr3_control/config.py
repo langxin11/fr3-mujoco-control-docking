@@ -129,8 +129,10 @@ class DockingConfig:
     virtual_mass: np.ndarray = field(
         default_factory=lambda: np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0], dtype=float)
     )
+    # 各向异性刚度：横向 (x, y) 保持较高刚度以维持对中，轴向 (z，插入方向)
+    # 允许较低刚度以吸收接触冲击。世界坐标系下，对接接近方向近似沿 z 轴。
     stiffness: np.ndarray = field(
-        default_factory=lambda: np.array([100.0, 100.0, 100.0, 25.0, 25.0, 25.0], dtype=float)
+        default_factory=lambda: np.array([200.0, 200.0, 100.0, 25.0, 25.0, 25.0], dtype=float)
     )
     # 阻尼不再手动指定，由 task_space_impedance 根据操作空间惯性矩阵 Λ 和
     # 参考刚度 K_r 按 D_r = 2√(Λ⊙K_r) 在线计算临界阻尼。该公式源自
@@ -140,9 +142,10 @@ class DockingConfig:
     #   α = σ(k_α · ‖F_ext‖)          sigmoid 接触力→软化因子
     #   K_r = clip((1-α)·stiffness, min_stiffness, stiffness)
     # 自由空间中 K_r ≈ stiffness（高精度跟踪），大接触力下 K_r → min_stiffness（柔顺）。
+    # 横向最低刚度 80 N/m 限制 1 N 横向力下的偏移在 ~12 mm 以内。
     adaptive_stiffness_gain: float = 0.5
     min_stiffness: np.ndarray = field(
-        default_factory=lambda: np.array([30.0, 30.0, 30.0, 8.0, 8.0, 8.0], dtype=float)
+        default_factory=lambda: np.array([80.0, 80.0, 30.0, 8.0, 8.0, 8.0], dtype=float)
     )
     nullspace_stiffness: float = 4.0
     nullspace_damping: float = 2.5

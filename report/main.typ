@@ -220,7 +220,11 @@ $ Lambda (dot.double(x)-dot.double(x)_d)+D_r (dot(x)-dot(x)_d)+K_r (x-x_d)=F_"ex
 
 $ D_(r,i) = 2 sqrt(Lambda_(i i) dot K_(r,i)), $
 
-该式源自 $D_r=sqrt(Lambda)sqrt(K_r)+sqrt(K_r)sqrt(Lambda)$ 在 $K_r$ 取对角形式时的退化，保证各自由度闭环响应均处于临界阻尼，免除了逐任务调参的需要。首次接触后，位置参考冻结在接触位姿，控制器仅以力反馈继续小幅压紧，避免原预插入轨迹对非凸网格造成额外冲击。控制器利用实时质量矩阵和雅可比构造操作空间惯性 $Lambda=(J M^(-1)J^T+lambda_o^2 I)^(-1)$，再以 $tau=J^T Lambda a_"cmd"+h+N^T tau_0$ 输出关节转矩；$tau_0$ 为回中零空间阻尼项。平动虚拟质量和刚度分别取 10 kg 和 100 N/m，转动三轴分别取 1 kg 和 25 N·m/rad；阻尼由上述 $D_r$ 公式在线确定。较低的刚度允许接触后出现受控位置偏差，以换取较小的冲击力。
+该式源自 $D_r=sqrt(Lambda)sqrt(K_r)+sqrt(K_r)sqrt(Lambda)$ 在 $K_r$ 取对角形式时的退化，保证各自由度闭环响应均处于临界阻尼，免除了逐任务调参的需要。
+
+与轨迹跟踪实验中各向同性的 PD 增益不同，对接任务的刚度采用#strong[各向异性设计]：在世界坐标系中，横向（$x$、$y$）参考刚度设为 200 N/m、最低 80 N/m，以维持工具与母端轴线的高精度对中；轴向（$z$，即插入方向）参考刚度保持 100 N/m、最低 30 N/m，允许足够的轴向柔顺以吸收接触冲击。转动三轴刚度保持 25 N·m/rad、最低 8 N·m/rad。该设计遵循"横向对中优先、轴向吸震优先"的对接原则——1 N 的横向接触力在最低横向刚度下仅产生约 12.5 mm 的偏移，而同样的力在轴向最低刚度下允许约 33 mm 的柔顺位移。
+
+首次接触后，位置参考冻结在接触位姿，控制器仅以力反馈继续小幅压紧，避免原预插入轨迹对非凸网格造成额外冲击。控制器利用实时质量矩阵和雅可比构造操作空间惯性 $Lambda=(J M^(-1)J^T+lambda_o^2 I)^(-1)$，再以 $tau=J^T Lambda a_"cmd"+h+N^T tau_0$ 输出关节转矩；$tau_0$ 为回中零空间阻尼项。阻尼由上述 $D_r$ 公式在线确定。
 
 == 比较框架
 
@@ -349,20 +353,35 @@ PD 的关节 RMSE 为 #f2(pd-nom.at("joint_rmse_deg"))°，小于计算力矩控
 
 #figure(
   table(
-    columns: (2.0cm, 2.1cm, 2.3cm, 2.3cm, 2.3cm, 2.3cm),
+    columns: (1.4cm, 1.7cm, 1.7cm, 1.7cm, 1.7cm, 1.7cm, 1.7cm),
+    stroke: 0.5pt,
+    inset: 4pt,
+    align: center,
+    table.header([控制器], [接触/s], [峰值力/N], [保持力/N], [横向/mm], [轴向/mm], [姿态/°]),
+    [刚性 CTC], [#f2(docking-ctc.at("contact_start_s"))], [#f2(docking-ctc.at("peak_contact_force_n"))], [#f2(docking-ctc.at("steady_contact_force_n"))], [#f2(docking-ctc.at("lateral_error_final_mm"))], [#f2(docking-ctc.at("axial_error_final_mm"))], [#f2(docking-ctc.at("alignment_angle_deg"))],
+    [阻抗控制], [#f2(docking-impedance.at("contact_start_s"))], [#f2(docking-impedance.at("peak_contact_force_n"))], [#f2(docking-impedance.at("steady_contact_force_n"))], [#f2(docking-impedance.at("lateral_error_final_mm"))], [#f2(docking-impedance.at("axial_error_final_mm"))], [#f2(docking-impedance.at("alignment_angle_deg"))],
+  ),
+  caption: [柔顺对接量化指标（横向 = 垂直于插入轴的偏差，轴向 = 沿插入方向）],
+)
+
+#figure(
+  table(
+    columns: (1.6cm, 2.2cm, 2.4cm, 2.6cm, 2.4cm),
     stroke: 0.5pt,
     inset: 5pt,
     align: center,
-    table.header([控制器], [接触时刻/s], [峰值力/N], [保持力/N], [最终偏差/mm], [保持接触/%]),
-    [刚性 CTC], [#f2(docking-ctc.at("contact_start_s"))], [#f2(docking-ctc.at("peak_contact_force_n"))], [#f2(docking-ctc.at("steady_contact_force_n"))], [#f2(docking-ctc.at("ee_final_mm"))], [#f2(docking-ctc.at("hold_contact_percent"))],
-    [阻抗控制], [#f2(docking-impedance.at("contact_start_s"))], [#f2(docking-impedance.at("peak_contact_force_n"))], [#f2(docking-impedance.at("steady_contact_force_n"))], [#f2(docking-impedance.at("ee_final_mm"))], [#f2(docking-impedance.at("hold_contact_percent"))],
+    table.header([控制器], [插入深度/mm], [保持接触/%], [保持段接触点数], [峰值电流/A]),
+    [刚性 CTC], [#f2(docking-ctc.at("insertion_depth_mm"))], [#f2(docking-ctc.at("hold_contact_percent"))], [#f2(docking-ctc.at("avg_contact_points_hold"))], [#f2(docking-ctc.at("peak_current_a"))],
+    [阻抗控制], [#f2(docking-impedance.at("insertion_depth_mm"))], [#f2(docking-impedance.at("hold_contact_percent"))], [#f2(docking-impedance.at("avg_contact_points_hold"))], [#f2(docking-impedance.at("peak_current_a"))],
   ),
-  caption: [柔顺对接量化指标],
+  caption: [柔顺对接补充指标],
 )
 
-两种控制器均通过配置的完成判据。刚性 CTC 的接触始于 #f2(docking-ctc.at("contact_start_s")) s，峰值接触力为 #f2(docking-ctc.at("peak_contact_force_n")) N，保持段均值为 #f2(docking-ctc.at("steady_contact_force_n")) N——其闭环仅提供 $Lambda^(-1)F_"ext"$ 的纯惯性响应，接触力主要由非凸网格几何和物理参数决定。阻抗控制在 #f2(docking-impedance.at("contact_start_s")) s 首次接触，峰值和保持段均值分别为 #f2(docking-impedance.at("peak_contact_force_n")) N 与 #f2(docking-impedance.at("steady_contact_force_n")) N。得益于 sigmoid 自适应刚度在接触后自动将 $K_r$ 从 100/25 柔化至接近 $K_min$（30/8），相对刚性 CTC，阻抗控制将峰值接触力降低约 #reduction(docking-ctc.at("peak_contact_force_n"), docking-impedance.at("peak_contact_force_n"))%，并将保持段压紧力降低约 #reduction(docking-ctc.at("steady_contact_force_n"), docking-impedance.at("steady_contact_force_n"))%。与之前固定刚度方案（阻尼手调，峰值力 7.87 N）相比，$Lambda$ 基临界阻尼与自适应刚度的组合进一步压缩了峰值力和稳态接触力。
+两种控制器均通过配置的完成判据。刚性 CTC 的接触始于 #f2(docking-ctc.at("contact_start_s")) s，峰值接触力为 #f2(docking-ctc.at("peak_contact_force_n")) N，保持段均值为 #f2(docking-ctc.at("steady_contact_force_n")) N——其闭环仅提供 $Lambda^(-1)F_"ext"$ 的纯惯性响应，接触力主要由非凸网格几何和物理参数决定，横向偏差 #f2(docking-ctc.at("lateral_error_final_mm")) mm 表明刚性推入时工具也出现了明显侧移。
 
-代价是阻抗控制的最终位置偏差为 #f2(docking-impedance.at("ee_final_mm")) mm，高于刚性 CTC 的 #f2(docking-ctc.at("ee_final_mm")) mm。这不是跟踪失效：在有意设定的低刚度下，偏差正是吸收接触过量和限制压紧力的柔顺位移。该结果说明对接任务不能只以末端位置误差排序；若对接件或环境脆弱，较小峰值接触力和稳定保持比刚性贴合更关键。三层指标中，阻抗控制在"物理交互安全"层全面占优，CTC 在"任务跟踪性能"层靠刚性贴合取得更小偏差，两者在"内部系统安全"层均无饱和——体现了刚性与柔顺两条路线的根本取舍。
+阻抗控制在 #f2(docking-impedance.at("contact_start_s")) s 首次接触，得益于#strong[各向异性刚度]（横向 200→80 N/m 对中、轴向 100→30 N/m 吸震），横向偏差仅 #f2(docking-impedance.at("lateral_error_final_mm")) mm——比旧版等向刚度方案（11.1 mm）降低约 54%，也比刚性 CTC（#f2(docking-ctc.at("lateral_error_final_mm")) mm）更小。峰值和保持段接触力分别为 #f2(docking-impedance.at("peak_contact_force_n")) N 与 #f2(docking-impedance.at("steady_contact_force_n")) N，相对 CTC 分别降低约 #reduction(docking-ctc.at("peak_contact_force_n"), docking-impedance.at("peak_contact_force_n"))% 和 #reduction(docking-ctc.at("steady_contact_force_n"), docking-impedance.at("steady_contact_force_n"))%。轴向偏差 #f2(docking-impedance.at("axial_error_final_mm")) mm 对应 #f2(docking-impedance.at("insertion_depth_mm")) mm 的插入深度——工具在自适应柔化后受控滑入母端凹槽，远超 CTC 的 #f2(docking-ctc.at("insertion_depth_mm")) mm。保持段平均接触点数为 #f2(docking-impedance.at("avg_contact_points_hold"))，低于 CTC 的 #f2(docking-ctc.at("avg_contact_points_hold"))，说明柔顺接触的力分布更集中在少量接触点——非凸 SDF 网格的多点接触特性需要更高的接触刚度才能充分激发。
+
+三层指标中，阻抗控制在"物理交互安全"层以极低的峰值力和保持力全面占优，且在"任务跟踪性能"层以更小的横向偏差体现了各向异性对中的有效性；CTC 靠刚性贴合取得更深插入和更多接触点，但代价是 3--5 倍的接触力。两者在"内部系统安全"层均无饱和。该对比表明：#strong[对接质量不能仅以总位置偏差排序]——横向偏差衡量对中精度，插入深度衡量配合程度，接触力衡量安全性，三者构成不可互相替代的多目标评价空间。
 
 = 结论与展望
 

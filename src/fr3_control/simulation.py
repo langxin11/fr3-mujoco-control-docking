@@ -149,19 +149,46 @@ def _docking_contact_wrench(
 
 
 def _docking_metrics(log: dict[str, np.ndarray]) -> dict[str, float | str]:
-    """计算柔顺对接的接触、插入和执行器量化指标。"""
+    """计算柔顺对接的接触、插入、对准和执行器量化指标。"""
     position_error = np.linalg.norm(log["ee_error"], axis=1)
     contact_force = np.linalg.norm(log["contact_wrench"][:, :3], axis=1)
     contact_torque = np.linalg.norm(log["contact_wrench"][:, 3:], axis=1)
     contact_indices = np.flatnonzero(log["contact_count"] > 0)
     hold_mask = log["time"] >= DOCKING.insertion_end
     hold_contact_percent = 100.0 * np.mean(log["contact_count"][hold_mask] > 0)
+    # --- 轴向/横向误差分解 ---
+    # 工具 z 轴（插入方向）取自末端旋转矩阵的第三列。
+    final_rotation = log["ee_rotation"][-1]
+    approach_axis = final_rotation[:, 2]
+    final_error_3d = log["ee_error"][-1]
+    axial_error = float(np.dot(final_error_3d, approach_axis))
+    lateral_error_3d = final_error_3d - axial_error * approach_axis
+    lateral_error = float(np.linalg.norm(lateral_error_3d))
+    # 保持段平均接触点数。
+    avg_contact_points = float(np.mean(log["contact_count"][hold_mask]))
+    # 姿态对齐角：工具 z 与参考 z 的夹角。
+    ref_approach = log["ee_rot_ref"][-1][:, 2]
+    alignment_angle = float(np.arccos(np.clip(np.dot(approach_axis, ref_approach), -1.0, 1.0)))
+    # 插入深度：首次接触后工具沿轴向超出接触点的距离。
+    if contact_indices.size:
+        first_contact_pos = log["ee"][contact_indices[0]]
+        insertion_depth = float(
+            np.dot(log["ee"][-1] - first_contact_pos, approach_axis)
+        )
+    else:
+        insertion_depth = 0.0
     return {
         "controller": str(log["controller"]),
         "scenario": "docking",
+        # 任务跟踪 — 位置
         "ee_rmse_mm": float(1e3 * np.sqrt(np.mean(position_error**2))),
         "ee_final_mm": float(1e3 * position_error[-1]),
+        "lateral_error_final_mm": float(1e3 * lateral_error),
+        "axial_error_final_mm": float(1e3 * abs(axial_error)),
+        "insertion_depth_mm": float(1e3 * insertion_depth),
         "ee_orientation_final_deg": float(np.rad2deg(log["ee_orientation_error"][-1])),
+        "alignment_angle_deg": float(np.rad2deg(alignment_angle)),
+        # 物理交互安全
         "peak_contact_force_n": float(np.max(contact_force)),
         "steady_contact_force_n": float(np.mean(contact_force[hold_mask])),
         "final_contact_force_n": float(contact_force[-1]),
@@ -169,7 +196,9 @@ def _docking_metrics(log: dict[str, np.ndarray]) -> dict[str, float | str]:
         "contact_start_s": float(log["time"][contact_indices[0]]) if contact_indices.size else -1.0,
         "contact_duration_s": float(SIM.control_dt * contact_indices.size),
         "hold_contact_percent": float(hold_contact_percent),
+        "avg_contact_points_hold": float(avg_contact_points),
         "docking_completed": bool(contact_indices.size and hold_contact_percent >= 90.0),
+        # 内部系统安全
         "peak_current_a": float(np.max(np.abs(log["current"]))),
         "peak_voltage_v": float(np.max(np.abs(log["voltage"]))),
         "saturation_percent": float(100.0 * np.mean(log["saturated"])),
