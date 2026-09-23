@@ -35,7 +35,7 @@ uv run fr3-control simulate-docking --controller impedance
 - `assets/franka_fr3_v2/scene_docking_interfaces.xml`：不含机械臂的公母接口对中检查场景；其预览图输出为 `figures/docking_interface_alignment.png`。
 - `report/main.typ` 与 `report/期末作业报告.pdf`：报告源文件和 PDF。
 
-报告中的姓名和学号已经填写；余老师知识点仍使用显式占位符，提交前必须替换。
+报告中的姓名、学号和课程知识点均已填写，最终 PDF 位于 `report/期末作业报告.pdf`。
 
 ## 模型与许可
 

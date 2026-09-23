@@ -16,6 +16,7 @@
 #show figure.caption: set text(size: 10.5pt)
 #show table.cell: set text(size: 10.5pt)
 #set math.equation(numbering: "(1)")
+#import "@preview/mitex:0.2.7": mitex
 
 #let metrics = json("../results/summary.json")
 #let pd-nom = metrics.at(0)
@@ -54,231 +55,175 @@
 
 = 引言
 
-研究对象为七自由度 Franka Research 3（FR3）串联机械臂，运动目标由半径 0.10 m、频率 0.2 Hz 的 $y$--$z$ 竖直圆和 $x$--$y$ 平面 8 字轨迹组成，并同步完成平滑的滚转、俯仰与偏航姿态变化。控制算法采用逆动力学中的计算力矩控制（Computed Torque Control, CTC），并以带惯性前馈的偏置力补偿 PD 作为基线，在相同执行器约束下进行定量比较。
+研究对象为七自由度 Franka Research 3（FR3）机械臂。末端依次跟踪半径 0.10 m、频率 0.2 Hz 的 $y$--$z$ 圆和 $x$--$y$ 平面 8 字轨迹，并同步改变姿态。控制器采用计算力矩控制（Computed Torque Control, CTC），以带惯性前馈的偏置力补偿 PD 为基线，在标称及 15 N 外力场景下比较跟踪性能。
 
-为使仿真更贴近工程实际，系统并非假设理想关节力矩源，而是建立了包含多刚体动力学、永磁同步电机（PMSM）、磁场定向控制（FOC）等效模型和减速器的完整执行器链。轨迹规划处理了七自由度冗余性，仿真中引入了电压与电流限幅、FR3 关节转矩限制、减速器效率、转子惯量和 15 N 末端恒定外力等非理想因素。
+仿真基于 MuJoCo Menagerie `franka_fr3_v2` @menagerie2022 和 MuJoCo 多刚体动力学 @todorov2012mujoco，保留连杆惯性、几何、关节限位及 FR3 公开的关节力矩边界 @franka2024fr3 @frankafci。系统进一步包含 PMSM/FOC 等效模型、减速器、电流与电压限幅，不采用理想力矩源。主要工作为：冗余逆运动学轨迹生成；机械臂—电机—减速器统一建模；偏置补偿 PD 与 CTC 对比；关节空间逆动力学与笛卡尔阻抗控制的柔顺对接实验。
 
-项目使用 Google DeepMind 维护的 MuJoCo Menagerie `franka_fr3_v2` 模型 @menagerie2022。该模型由 Franka 公开的 FR3 URDF 生成，保留了连杆惯性、几何与关节约束；FR3 厂商资料给出的额定负载为 3 kg、最大臂展为 855 mm，七轴均配置连杆侧力矩传感器 @franka2024fr3。MuJoCo 作为统一正向动力学仿真器的核心方法见 @todorov2012mujoco。所有控制、绘图和视频程序均使用 Python 编写。
+= 系统建模与轨迹规划
 
-本报告的主要工作包括：建立了 FR3 七自由度刚体、PMSM/FOC 工程等效驱动器和减速器的统一闭环模型，并严格区分了厂商公开的技术参数与工程假设；通过阻尼伪逆和零空间优化生成了连续的冗余关节轨迹；在相同执行器约束下定量比较了 PD 与计算力矩控制的跟踪精度与抗扰性能；进一步构造关节空间逆动力学轨迹跟踪与笛卡尔空间阻抗控制的接触对接比较实验。全部实验代码提供统一命令行接口，可一条命令复现实验、图表和视频。
-
-= 系统总体方案
-
-本章给出控制回路的整体结构，后续各章沿信号正向传播路径依次展开：运动学规划（第 3 章）生成期望关节轨迹，控制器（第 5 章）根据跟踪误差计算期望关节力矩，执行器链将力矩指令转化为实际关节力矩驱动被控对象（第 4 章），最终由实验（第 6 章）验证整体性能。
-
-== 系统架构
+== 总体架构与多速率时序
 
 #figure(
   image("../figures/system_architecture.svg", width: 100%),
   caption: [机械臂运动控制系统总体结构],
 )
 
-控制系统按照“参考生成 → 运动控制 → 驱动传动 → 被控对象 → 状态反馈”的闭环回路组织。图中显式区分参考关节轨迹 $(q^d, dot(q)^d, dot.double(q)^d)$、期望/实际关节力矩 $(tau^d, tau)$、状态测量 $z$ 和外部扰动 $F_"ext"$；虚线反馈通道将关节、末端及接触状态送回控制器。
+闭环信号链为 $(q_d,dot(q)_d,dot.double(q)_d) -> tau_d -> tau -> (q,dot(q))$。外层运动控制周期为 1 ms；MuJoCo 物理步长与 FOC q 轴电流环周期均为 0.05 ms。
 
-== 多速率控制时序
-
-控制周期采用多速率结构：MuJoCo 物理仿真和 FOC q 轴电流环以 0.05 ms 更新，外层运动控制器以 1 ms 更新。外层控制器给出期望关节力矩，该力矩通过减速器参数换算为期望 q 轴电流；电流 PI 调节器计算 q 轴电压，PMSM 实际转矩电流产生的电磁转矩经减速器作用于机械臂。
-
-= 运动学与轨迹规划
-
-被控对象在关节空间运动，而控制目标定义在末端任务空间，因此需要运动学模型建立两者的映射关系。本章从正运动学出发，建立任务空间与关节空间的微分映射（雅可比矩阵），进而处理七自由度冗余性以生成连续的关节空间参考轨迹。
-
-== 正运动学与雅可比矩阵
+== 冗余运动学与轨迹生成
 
 设七个关节角构成向量 $q in RR^7$，末端位姿写作齐次变换 $T_0^e(q)$。正运动学由各关节刚体变换依次相乘得到。末端线速度和角速度由几何雅可比矩阵给出：
 
 $ mat(v_e, omega_e) = J(q) dot(q), quad J(q) in RR^(6 times 7). $
 
-由于任务空间为六维而机械臂有七个关节，系统存在一个冗余自由度：末端运动仅约束雅可比映射的六维行空间，其七维零空间中任意关节速度分量不改变末端状态。这一特性为改善关节姿态、远离机械限位提供了自由度，但也意味着需在无穷多组局部关节速度解中选择合适的一组。
+其中 $v_e$、$omega_e$ 分别为末端线速度和角速度，$J(q)$ 将关节速度映射为六维末端速度。由于机械臂有 7 个关节而任务空间只有 6 维，系统保留一个可用于姿态优化的冗余自由度。
 
-== 阻尼伪逆与零空间运动
+采用阻尼伪逆与零空间回中项处理 $6 times 7$ 雅可比矩阵：
 
-采用阻尼最小二乘伪逆来构造逆运动学解：
+$ J^"+"=J^T(JJ^T+lambda^2 I)^(-1), quad
+  Delta q=J^"+"e+(I-J^"+"J)k_n(q_h-q). $
 
-$ J^"+" = J^T (J J^T + lambda^2 I)^(-1) $
+$J^+e$ 将末端位姿误差转换为关节修正量；投影矩阵 $I-J^+J$ 将回中运动限制在雅可比零空间内，因而不改变末端任务。阻尼 $lambda$ 用于限制奇异位形附近伪逆解的放大。
 
-每次逆运动学迭代的关节增量由两项叠加：主项将末端误差映射至关节空间，零空间项利用冗余自由度将关节向舒适姿态回中：
+参数为 $lambda=2.5 times 10^(-3)$、$k_n=0.025$，单步增量限制为 0.08 rad，关节限位裕量为 0.025 rad。任务时序为“过渡—圆—过渡—8 字—保持”，对应区间 $[0,1.5]$、$[1.5,6.5]$、$[6.5,8]$、$[8,13]$、$[13,14]$ s。过渡函数
 
-$ Delta q = J^"+" e + (I-J^"+"J) k_n (q_h-q). $
+$ s(u)=10u^3-15u^4+6u^5, quad u in [0,1] $
 
-其中 $e$ 同时包含末端位置误差和姿态旋转向量误差，$q_h$ 为舒适初始姿态，$k_n=0.025$ 为零空间回中系数，阻尼系数 $lambda=2.5 times 10^(-3)$。每步关节增量限制为 0.08 rad，并在机械限位内保留 0.025 rad 裕量。
+保证端点速度、加速度为零。逆运动学以 10 ms 离线求解，再用三次样条生成 1 ms 间隔的 $(q_d,dot(q)_d,dot.double(q)_d)$；正运动学复核的位置和姿态误差分别小于 3 mm 和 0.5°。
 
-== 轨迹生成与连续性
-
-第一段任务是位于末端初始位置附近、半径为 0.10 m 的 $y$--$z$ 竖直圆，$x$ 坐标保持不变；第二段是 $x$--$y$ 平面 8 字轨迹，x 和 y 向半宽分别为 0.10 m 和 0.07 m。圆周段叠加最大 12° 滚转和 6° 俯仰，8 字段叠加最大 16° 偏航和 5° 滚转；姿态角在各段起终点的值与一阶导数均为零。仿真总时长为 14 s：0--1.5 s 过渡至圆起点，1.5--6.5 s 完成圆轨迹，6.5--8 s 过渡至 8 字中心，8--13 s 完成 8 字轨迹，13--14 s 保持终点。
-
-过渡阶段使用五次时间缩放函数
-
-$ s(u)=10u^3-15u^4+6u^5, quad u in [0,1], $
-
-保证过渡两端的速度和加速度均为零，避免启停冲击。离线逆运动学以 10 ms 间隔求解离散关节参考点，再用三次样条插值得到 1 ms 控制周期下连续的 $q_d$、$dot(q)_d$ 和 $dot.double(q)_d$。离线逆解后抽取 25 个时刻重新计算正运动学，最大位置重构误差小于 3 mm、最大姿态重构误差小于 0.5°；同时检查相邻关节参考角变化，确认未出现逆解分支切换引起的跳变。
-
-= 被控对象建模
-
-上一章解决了"期望关节轨迹从哪来"的问题。然而，从期望关节力矩到实际关节运动之间存在一系列物理环节：电机将电压转化为电流与电磁转矩，减速器将高速低扭矩转换为低速高扭矩，最终驱动多刚体机械臂。本章沿信号正向传播路径，从内向外依次建立各环节的数学模型。
-
-== 七自由度机械臂动力学
+== 机械臂—执行器统一模型
 
 机械臂关节空间动力学描述关节力矩与关节运动之间的关系 @featherstone2008：
 
 $ M(q) dot.double(q) + C(q,dot(q))dot(q) + g(q) = tau + J_v(q)^T F_"ext". $
 
-其中 $M(q)$ 为对称正定质量矩阵，$C(q,dot(q))dot(q)$ 为科氏力与离心力项，$g(q)$ 为重力项，$tau$ 为执行器输出的关节力矩，$F_"ext"$ 为末端外力。仿真中由 MuJoCo 的组合刚体算法展开质量矩阵，并从偏置力向量取得科氏、离心和重力项，测试程序逐次验证了质量矩阵的对称性和正定性。
+$M(q)$ 表示关节空间惯性，$C(q,dot(q))dot(q)$ 为科氏/离心力，$g(q)$ 为重力，$J_v^T F_"ext"$ 将末端外力映射为关节力矩。$M$ 对称正定，保证给定合力矩时关节加速度唯一。
 
-FR3 v2 模型保留了各连杆质量、质心和完整惯性张量。关节碰撞、几何网格和机械限位来自 Menagerie；原始位置执行器被替换为力矩执行器，使控制输入不再是关节位置指令，而是 PMSM 电流经减速器产生的关节力矩。关节力矩绝对值限制采用 FR3 FCI 公开值：前四轴为 87 N·m，后三轴为 12 N·m @frankafci。
+MuJoCo 计算 $M$ 及偏置力 $h=C dot(q)+g$；测试验证 $M$ 的对称正定性。力矩限幅为
 
-== PMSM 与 FOC 工程等效模型
+$ |tau|_"max"=[87,87,87,87,12,12,12] "N·m". $
 
-上述动力学模型中的 $tau$ 由电机经减速器产生。现代机器人关节普遍采用无刷伺服驱动，仿真中采用表贴式 PMSM 在理想转子位置检测、理想 FOC 且 $i_d=0$ 条件下的 q 轴模型描述转矩通道：
+在理想 FOC 且 $i_d=0$ 条件下，PMSM、电机侧速度和减速器输出满足
 
-$ L_q dot(i_q) + R_s i_q + K_e omega_m = u_q, quad tau_m=K_t i_q. $
+$ L_q dot(i_q)+R_s i_q+K_e omega_m=u_q, quad
+  tau_m=K_t i_q, quad
+  omega_m=N dot(q), quad
+  tau=eta N K_t i_q. $
 
-FR3 厂商资料未公开各关节电机的相电阻、电感、磁链和真实减速比，因此报告中不将任何电气参数表述为 FR3 官方内部参数。为建立可复现实验，选用公开的 48 V Maxon EC-i 52、180 W 无刷电机作为代表性参数源 @maxoneci52：$R_s=0.284 Omega$，$L_q=0.45 "mH"$，$K_t=0.0919 N dot m/A$，$K_e=(1/104) V/"rpm" approx 0.0918 V dot s/"rad"$，极对数为 8，转子惯量 $J_m=1.70 times 10^(-5) "kg" dot m^2$。该模型用于考察电流动态、反电动势和电压限幅对控制的影响，而非复刻 FR3 私有驱动器。
+第一式表示 q 轴电压依次用于建立电流、克服电阻压降和反电动势；$i_q$ 经转矩常数 $K_t$ 产生电机力矩。减速比 $N$ 放大输出力矩，效率 $eta$ 描述传动损耗，由此形成 $u_q -> i_q -> tau_m -> tau$ 的执行器链。
 
-== 减速器与电流控制
+电气参数取自 48 V Maxon EC-i 52 代表性电机 @maxoneci52：
 
-电机产生的电磁转矩经减速器放大后作用于关节。由于 FR3 真实减速比同样未公开，七个关节的工程等效减速比分别设为 $[100,100,100,100,50,50,50]$，效率设为 $eta=0.9$，并通过前述 FR3 官方关节转矩上限截断最终输出。电机与关节侧变量满足
+#mitex(`
+  \left\{
+  \begin{aligned}
+    R_s &= 0.284\,\Omega,\quad
+    L_q = 0.45\,\mathrm{mH},\quad
+    K_t = 0.0919\,\mathrm{N}\cdot\mathrm{m/A},\\
+    K_e &= 0.0918\,\mathrm{V}\cdot\mathrm{s/rad},\quad
+    J_m = 1.70\times10^{-5}\,\mathrm{kg}\cdot\mathrm{m^2}.
+  \end{aligned}
+  \right.
+`)
 
-$ omega_m=N dot(q), quad tau=eta N K_t i, quad J_"ref"=J_m N^2. $
+工程等效减速比 $N=[100,100,100,100,50,50,50]$，效率 $eta=0.9$。FR3 未公开上述内部电气参数与真实减速比，故其仅用于可复现的执行器动态研究。电流 PI 取
 
-至此，从电压到关节运动的完整物理因果链已建立：$u_q$ 经 $R_s$、$L_q$ 决定 $i_q$，$i_q$ 经 $K_t$ 决定 $tau_m$，$tau_m$ 经 $N$ 和 $eta$ 决定 $tau$，$tau$ 经机械臂动力学决定 $q$。在此过程中，反电动势 $K_e omega_m$ 形成与转速相关的负反馈，电压饱和和电流限制则引入非线性。
+$ omega_c=2000 "rad/s", quad K_"pi"=L_q omega_c, quad K_"ii"=R_s omega_c, $
 
-q 轴电流 PI 的带宽取 $omega_c=2000 "rad"/s$，根据一阶电流模型设 $K_"pi"=L_q omega_c$、$K_"ii"=R_s omega_c$，并加入反电动势和电阻压降前馈。48 V 等效电压饱和时使用反算抗积分饱和；峰值电流由关节转矩限制反算得到，确保最终关节力矩不超过 FR3 公开边界。
+并加入反电动势前馈、48 V 电压限幅和反算抗积分饱和。
 
 = 控制器设计
 
-前两章分别建立了运动学映射和被控对象模型，本章在此基础上设计控制器：给定期望关节轨迹 $q_d$ 和实际关节状态 $q$、$dot(q)$，计算期望关节力矩 $tau_d$，使跟踪误差收敛。
+== 重力/偏置补偿 PD 与惯性前馈
 
-== 带惯性前馈的偏置力补偿 PD
+令 $e=q_d-q$、$dot(e)=dot(q)_d-dot(q)$。重力补偿、偏置补偿及本项目基线控制律依次为
 
-基线控制器在关节空间 PD 反馈的基础上，引入惯性前馈项 $M(q)dot.double(q)_d$，构成前馈-反馈复合结构：
+$ tau_"PD+g"=K_p(q_d-q)+K_d(dot(q)_d-dot(q))+g(q). $
 
-$ tau_"PD"=M(q)dot.double(q)_d+K_p(q_d-q)+K_d(dot(q)_d-dot(q))+h(q,dot(q)), $
+$ tau_"PD+h"=K_p(q_d-q)+K_d(dot(q)_d-dot(q))+h(q,dot(q)). $
 
-其中 $h=C dot(q)+g$ 为当前状态的科氏力与重力偏置项。惯性前馈项 $M(q)dot.double(q)_d$ 使控制器能够提前输出维持参考加速度所需的力矩，无需等待位置或速度误差积累；$K_p$ 和 $K_d$ 则构成对角反馈增益，用于抑制剩余的跟踪误差和外力扰动。与计算力矩控制相比，该结构保留了前馈补偿中的惯性耦合信息，但反馈部分不使用质量矩阵进行关节解耦，两者之间的剩余差距可归因于反馈通道的惯性解耦和高增益。
+$ tau_"base"=M(q)dot.double(q)_d+K_p e+K_d dot(e)+h(q,dot(q)). $
 
-引入偏置补偿的目的是使对比集中于惯性耦合补偿和动态跟踪性能，而非静态重力误差——若基线不含偏置项，PD 的跟踪误差将主要由重力项决定，无法公允地比较两种控制策略在多轴耦合场景下的差异。
+$tau_"PD+g"$ 只消除准确模型下的静态重力误差，$tau_"PD+h"$ 进一步补偿速度相关的科氏/离心项；实验基线再用 $M dot.double(q)_d$ 提前提供参考加速度所需力矩。未知外力仍需由 $K_p e+K_d dot(e)$ 抵消，因此反馈增益直接影响抗扰性能。增益为
 
-七个关节的刚度参数为 $[160,180,140,110,70,45,30]$，阻尼参数为 $[25,28,22,18,12,8,6]$。这些参数通过试凑选取，权衡了响应速度与饱和率。
+$ K_p="diag"(160,180,140,110,70,45,30), quad
+  K_d="diag"(25,28,22,18,12,8,6). $
 
 == 计算力矩控制
 
-计算力矩控制（Computed Torque Control, CTC）在控制理论中更通用的名称是反馈线性化控制（Feedback Linearization Control）或逆动力学控制（Inverse Dynamics Control），CTC 是它在机器人关节空间的具体实现 @siciliano2009。三者层次关系为：反馈线性化是最上位的非线性控制框架，逆动力学控制强调用动力学模型抵消被控对象的非线性项，CTC 则特指将逆动力学计算得到的力矩直接作为控制指令。
+计算力矩控制是机器人关节空间的逆动力学/反馈线性化控制 @siciliano2009：
 
-CTC 的控制律为
+$ tau_"CTC"=M(q)[dot.double(q)_d+K_d dot(e)+K_p e]+h(q,dot(q)). $
 
-$ tau_"CTC"=M(q)[dot.double(q)_d+K_d(dot(q)_d-dot(q))+K_p(q_d-q)]+h(q,dot(q)). $
+方括号内为由参考加速度和误差反馈组成的虚拟关节加速度；$M(q)$ 将其转换为关节力矩，$h$ 抵消名义非线性偏置项。
 
-其核心思想是先用 $M(q)$ 和 $h(q,dot(q))$ 抵消被控对象的非线性动态，使等效闭环系统简化为线性二阶误差动力学。当模型准确且执行器不饱和时，将控制律代入式 (5) 的机械臂动力学方程 $M(q)dot.double(q)+h(q,dot(q))=tau$ 可得
+模型准确、无外力且执行器不饱和，则
 
-$ M(q)dot.double(q)+h=M(q)[dot.double(q)_d+K_d dot(e)+K_p e]+h, $
-$ M(q)dot.double(q)=M(q)[dot.double(q)_d+K_d dot(e)+K_p e], $
-$ dot.double(q)=dot.double(q)_d+K_d dot(e)+K_p e quad (M(q) "恒可逆"), $
-$ dot.double(e)+K_d dot(e)+K_p e=0. $
+$ M dot.double(q)+h=tau_"CTC" quad => quad
+  dot.double(e)+K_d dot(e)+K_p e=0. $
 
-原本非线性、强耦合的七自由度机械臂动力学，在 CTC 作用下被"线性化"为一个解耦的二阶线性误差系统——这正是反馈线性化名称的由来。
+该式表明原非线性耦合系统被化为由 $K_p$、$K_d$ 决定的二阶误差系统；其解耦结论依赖动力学模型准确且力矩未饱和。
 
-按二阶标准形式设置 $K_p=omega_n^2 I$、$K_d=2 zeta omega_n I$。在 $omega_n in {12,15,18,22,28}$ 的确定性网格中，综合末端 RMSE、最大误差和饱和率，最终选择 $omega_n=18 "rad"/s$、$zeta=1$。更高带宽可继续降低理想跟踪误差，但会推高峰值电流并增大模型不确定性敏感度。
+取 $K_p=omega_n^2 I$、$K_d=2zeta omega_n I$；由 $omega_n in {12,15,18,22,28}$ 网格搜索确定 $omega_n=18 "rad/s"$、$zeta=1$，即 $K_p=324 I$、$K_d=36 I$。
 
+#pagebreak(weak: true)
 == 笛卡尔空间阻抗控制
 
-=== 刚性控制的接触缺陷
+CTC 在接触下的任务空间响应近似为
 
-首先分析计算力矩控制（§5.2）在接触场景下的根本局限。将 CTC 控制律 $tau_"CTC"=M(q)dot.double(q)_c+h(q,dot(q))$ 代入机械臂动力学方程，并假设模型补偿准确 $(tilde(h)=h)$，闭环关节动力学为：
+$ dot.double(x)=dot.double(x)_c+Lambda^(-1)F_"ext", quad
+  Lambda=(J M^(-1)J^T)^(-1), $
 
-$ dot.double(q)=dot.double(q)_c+M(q)^(-1)J(q)^T F_"ext". $
+$Lambda$ 是机械臂在末端六维空间中呈现的等效惯性。CTC 对接触力只产生 $Lambda^(-1)F_"ext"$ 的惯性响应，缺少可独立调节的末端刚度和阻尼，因而难以限制接触冲击。柔顺对接采用六维阻抗关系 @hogan1985impedance：
 
-左乘 $J M^(-1)$ 并利用运动学关系，映射到任务空间加速度：
+$ M_d(dot.double(x)-dot.double(x)_d)+D_r(dot(x)-dot(x)_d)
+  +K_r(x-x_d)=F_"ext"-F_d. $
 
-$ dot.double(x)=dot.double(x)_d+Lambda^(-1)F_"ext", quad Lambda = (J M^(-1)J^T)^(-1). $
+$M_d$、$D_r$、$K_r$ 分别规定期望末端惯性、阻尼和刚度，$F_d$ 为目标保持力。该关系允许末端在外力下产生受控位移，以牺牲少量跟踪精度换取柔顺接触。
 
-该式表明 CTC 的闭环对外力呈现纯惯性响应 $Lambda^(-1)F_"ext"$，缺乏 $D_d dot(e)$ 和 $K_d e$ 项来调节接触力。在精密对接等接触密集任务中，这种无阻尼特性将导致接触力过大甚至碰撞不稳定 @ren2026unified。因此，刚性跟踪控制器不能满足对接任务对柔顺交互的根本需求。
+操作空间惯性、接触力软化因子、有效刚度和临界阻尼为 @ren2026unified
 
-=== 阻抗控制律与临界阻尼设计
+$ Lambda=(J M^(-1)J^T+lambda_o^2 I)^(-1), quad
+  alpha=2 sigma(k_alpha norm(F_"ext"))-1, $
 
-柔顺对接采用六维操作空间阻抗关系 @hogan1985impedance：
+$ K_r="clip"((1-alpha)K_"ref",K_"min",K_"ref"), quad
+  D_(r,i)=2sqrt(Lambda_(i i)K_(r,i)). $
 
-$ Lambda (dot.double(x)-dot.double(x)_d)+D_r (dot(x)-dot(x)_d)+K_r (x-x_d)=F_"ext"-F_d, $
+$ K_"ref"="diag"(800,800,400,80,80,80), quad
+  K_"min"="diag"(80,80,40,10,10,10). $
 
-其中 $x$ 同时包含末端位置和旋转向量，$F_"ext"$ 为 MuJoCo 接触对计算得到、转换到世界坐标系的工具受力/力矩，$F_d$ 为接触锁定后沿插入反方向的 7 N 虚拟保持力。与 §5.1 中人为指定对角阻尼不同（$[50,50,50,10,10,10]$），此处阻尼矩阵 $D_r$ 按 Ren & Shan (2026) @ren2026unified 的临界阻尼设计在线计算：
+$alpha$ 随接触力幅值增大，使 $K_r$ 从 $K_"ref"$ 降至 $K_"min"$；$D_(r,i)$ 按当前等效惯性和刚度取临界阻尼，抑制接触振荡。横向刚度高于插入方向刚度，以同时维持轴线对中并吸收轴向冲击。
 
-$ D_(r,i) = 2 sqrt(Lambda_(i i) dot K_(r,i)), $
+$ M_d="diag"(10,10,10,1,1,1), quad k_alpha=0.5. $
 
-该式源自 $D_r=sqrt(Lambda)sqrt(K_r)+sqrt(K_r)sqrt(Lambda)$ 在 $K_r$ 取对角形式时的退化，保证各自由度闭环响应均处于临界阻尼，免除了逐任务调参的需要。
+#mitex(`
+  \begin{aligned}
+    P_N &= I-M^{-1}J^\top\Lambda J,\\
+    \tau &= J^\top\Lambda a_{\mathrm{cmd}}+h+P_N^\top\tau_0.
+  \end{aligned}
+`)
 
-与轨迹跟踪实验中各向同性的 PD 增益不同，对接任务的刚度采用#strong[各向异性设计]：在世界坐标系中，横向（$x$、$y$）参考刚度为 800 N/m、最低 80 N/m，以维持工具与母端轴线的对中；轴向（$z$，即插入方向）参考刚度为 400 N/m、最低 40 N/m，允许足够的轴向柔顺以吸收接触冲击。转动三轴刚度为 80 N·m/rad、最低 10 N·m/rad。该设计遵循"横向对中优先、轴向吸震优先"的对接原则。
-
-首次接触后，位置参考冻结在接触位姿，控制器仅以力反馈继续小幅压紧，避免原预插入轨迹对非凸网格造成额外冲击。控制器利用实时质量矩阵和雅可比构造操作空间惯性 $Lambda=(J M^(-1)J^T+lambda_o^2 I)^(-1)$，再以 $tau=J^T Lambda a_"cmd"+h+N^T tau_0$ 输出关节转矩；$tau_0$ 为回中零空间阻尼项。阻尼由上述 $D_r$ 公式在线确定。
-
-== 比较框架
-
-两种控制器使用完全相同的参考轨迹、初始状态、物理步长、电机参数、减速器参数和电压/电流限制。控制器输出期望关节力矩，实际力矩必须经过电流动态和减速器后作用于 MuJoCo 模型——该约束避免了"理想力矩源"假设掩盖执行器带宽的实际情况。以下实验将在这套统一框架下评估两种控制器的性能差异。
+其中 $J^T Lambda a_"cmd"$ 产生任务空间控制力矩，$P_N$ 为动态一致零空间投影矩阵，$P_N^T tau_0$ 在不破坏末端任务的零空间内保持关节姿态。
 
 = 仿真实验与结果分析
 
 == 实验设置
 
-实验包含两种场景。标称场景运行 14 s，用于评价竖直圆、平面 8 字及同步姿态变化的基本跟踪精度。抗扰场景在圆周段的 4.5--5.5 s 对末端施加竖直向下的 15 N 恒定外力，其余条件与标称场景一致。
+标称场景运行 14 s；抗扰场景在 $t in [4.5,5.5]$ s 施加沿重力方向的 15 N 末端外力。评价量为位置/姿态 RMSE 与最大误差、关节 RMSE、峰值电流/电压、饱和率及撤力后恢复至 10 mm 的时间。成功条件为标称位置 RMSE $<5$ mm、撤力后 0.5 s 内恢复。
 
-量化评价指标包括：（1）末端位置均方根误差（RMSE）与最大误差；（2）末端姿态 RMSE 与最大误差；（3）关节角 RMSE；（4）峰值电流与峰值电压；（5）执行器饱和时间比例；（6）撤力后恢复到 10 mm 误差以内所需时间。预设成功条件为：计算力矩控制在标称场景下的末端位置 RMSE 小于 5 mm，且在撤力后 0.5 s 内恢复至 10 mm 误差范围；同时通过惯性前馈 PD 与 CTC 的对照，分离前馈补偿与反馈解耦各自对跟踪精度的贡献。
-
-== 标称轨迹跟踪
+== 轨迹跟踪与抗扰结果
 
 #figure(
-  image("../figures/trajectory_3d.png", width: 100%),
-  caption: [标称场景下圆轨迹与 8 字轨迹的分开对比（RGB 箭头表示参考末端 $x$--$y$--$z$ 姿态标架）],
+  image("../figures/trajectory_3d.png", width: 92%),
+  caption: [圆轨迹与 8 字轨迹跟踪；RGB 箭头表示参考末端姿态],
 )
 
-图中左侧仅保留 1.5--6.5 s 的 $y$--$z$ 圆轨迹，右侧仅保留 8--13 s 的 $x$--$y$ 平面 8 字轨迹，不包含启动和段间过渡。分开绘制避免了两个平面轨迹在同一三维坐标系中互相遮挡。每条参考轨迹上等时间间隔绘制 8 个末端姿态标架，红、绿、蓝箭头依次表示工具坐标系的 $x$、$y$、$z$ 轴，用于直观展示轨迹运动过程中的姿态变化。
-
 #figure(
-  image("../figures/segment_tracking_error.png", width: 96%),
+  image("../figures/segment_tracking_error.png", width: 90%),
   caption: [圆轨迹与 8 字轨迹的位置、姿态误差分段对比],
 )
 
-#figure(
-  table(
-    columns: (2.2cm, 2.2cm, 2.6cm, 2.6cm, 2.8cm),
-    stroke: 0.5pt,
-    inset: 5pt,
-    align: center,
-    table.header([轨迹段], [控制器], [位置 RMSE/mm], [位置最大误差/mm], [姿态 RMSE/°]),
-    [圆轨迹], [PD], [#f2(pd-nom.at("circle_ee_rmse_mm"))], [#f2(pd-nom.at("circle_ee_max_mm"))], [#f2(pd-nom.at("circle_orientation_rmse_deg"))],
-    [圆轨迹], [计算力矩], [#f2(ctc-nom.at("circle_ee_rmse_mm"))], [#f2(ctc-nom.at("circle_ee_max_mm"))], [#f2(ctc-nom.at("circle_orientation_rmse_deg"))],
-    [8 字轨迹], [PD], [#f2(pd-nom.at("figure8_ee_rmse_mm"))], [#f2(pd-nom.at("figure8_ee_max_mm"))], [#f2(pd-nom.at("figure8_orientation_rmse_deg"))],
-    [8 字轨迹], [计算力矩], [#f2(ctc-nom.at("figure8_ee_rmse_mm"))], [#f2(ctc-nom.at("figure8_ee_max_mm"))], [#f2(ctc-nom.at("figure8_orientation_rmse_deg"))],
-  ),
-  caption: [标称场景分轨迹段量化指标],
-)
-
-在圆轨迹段，PD 和计算力矩控制的位置 RMSE 分别为 #f2(pd-nom.at("circle_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("circle_ee_rmse_mm")) mm，计算力矩控制降低约 #reduction(pd-nom.at("circle_ee_rmse_mm"), ctc-nom.at("circle_ee_rmse_mm"))%。在 8 字轨迹段，两者的位置 RMSE 分别为 #f2(pd-nom.at("figure8_ee_rmse_mm")) mm 和 #f2(ctc-nom.at("figure8_ee_rmse_mm")) mm，降低约 #reduction(pd-nom.at("figure8_ee_rmse_mm"), ctc-nom.at("figure8_ee_rmse_mm"))%。8 字段包含更频繁的曲率变化，因而两种控制器的位置 RMSE 均略高于各自的圆轨迹结果。姿态指标则呈现不同结果：PD 在圆和 8 字段的姿态 RMSE 分别为 #f2(pd-nom.at("circle_orientation_rmse_deg"))° 和 #f2(pd-nom.at("figure8_orientation_rmse_deg"))°，均明显小于计算力矩控制的 #f2(ctc-nom.at("circle_orientation_rmse_deg"))° 和 #f2(ctc-nom.at("figure8_orientation_rmse_deg"))°。PD 对角增益对腕部关节的较低刚度使姿态跟踪更平滑，而计算力矩控制中高统一的 $K_p=324$ 在驱动较小惯量的腕部关节时引入了轻微超调。
-
-标称场景中，PD 的末端 RMSE 为 #f2(pd-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(pd-nom.at("ee_max_mm")) mm；计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm，最大误差为 #f2(ctc-nom.at("ee_max_mm")) mm。计算力矩控制将 RMSE 降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%，最大误差降低约 #reduction(pd-nom.at("ee_max_mm"), ctc-nom.at("ee_max_mm"))%，两者均满足末端 RMSE 小于 5 mm 的预设目标。PD 在引入惯性前馈后已将跟踪精度提升至与 CTC 接近的水平，剩余差距主要来自反馈通道的对角增益结构和较低的等效刚度——CTC 通过 $M(q)$ 将高增益误差项映射为关节力矩，实现了更完整的惯性解耦。
-
-PD 的关节 RMSE 为 #f2(pd-nom.at("joint_rmse_deg"))°，小于计算力矩控制的 #f2(ctc-nom.at("joint_rmse_deg"))°，这并不与末端精度结论矛盾：七自由度系统中，不同关节误差组合经雅可比映射后对末端位姿的贡献不同。PD 通过直接约束单关节偏差获得了较低的关节 RMSE，但反馈通道缺少惯性解耦，少量末端误差仍来自关节间动力学耦合；计算力矩控制以略高的关节偏差换取更协调的多轴运动。两种控制器的峰值电流均为 #f2(ctc-nom.at("peak_current_a")) A，饱和时间占比小于 0.01%，对完整实验影响可忽略。
-
-#figure(
-  image("../figures/joint_current.png", width: 92%),
-  caption: [标称场景下计算力矩控制的关节响应与 PMSM q 轴电流],
-)
-
-== 外力抗扰性能
-
-#figure(
-  image("../figures/tracking_error.png", width: 94%),
-  caption: [标称与 15 N 外力场景下的末端位置误差],
-)
-
-15 N 竖直向下外力作用期间，PD 的末端 RMSE 增至 #f2(pd-dis.at("ee_rmse_mm")) mm，最大误差为 #f2(pd-dis.at("ee_max_mm")) mm；计算力矩控制的 RMSE 为 #f2(ctc-dis.at("ee_rmse_mm")) mm，最大误差为 #f2(ctc-dis.at("ee_max_mm")) mm。相对 PD，计算力矩控制将抗扰场景 RMSE 降低约 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%。
-
-撤去外力后，PD 恢复到 10 mm 误差以内需要 #f2(pd-dis.at("recovery_s")) s，计算力矩控制仅需 #f2(ctc-dis.at("recovery_s")) s。惯性前馈项 $M(q)dot.double(q)_d$ 主要用于补偿参考加速度，对突发外力扰动无直接抑制作用；抗扰性能几乎完全依赖反馈增益的刚度水平。计算力矩控制等效的 $K_p=324$ 远高于 PD 的对角刚度（尤其是腕部关节，差距达 3--10 倍），其误差反馈位于模型补偿后的等效线性系统内、闭环带宽更为一致，因此抗扰和恢复显著更快。这一对比清晰地分离了前馈和反馈的不同角色：前馈决定跟踪精度，反馈增益决定抗扰能力。计算力矩控制不是严格意义上的鲁棒控制——若质量、摩擦或减速器效率存在显著建模误差，其优势可能减小；本实验验证的是在准确模型条件下的反馈抗扰能力。
-
-#figure(
-  image("../figures/metrics_comparison.png", width: 76%),
-  caption: [四组实验末端 RMSE 量化比较],
-)
-
-== 指标汇总
+圆轨迹位置 RMSE 由 PD 的 #f2(pd-nom.at("circle_ee_rmse_mm")) mm 降至 CTC 的 #f2(ctc-nom.at("circle_ee_rmse_mm")) mm；8 字轨迹由 #f2(pd-nom.at("figure8_ee_rmse_mm")) mm 降至 #f2(ctc-nom.at("figure8_ee_rmse_mm")) mm。CTC 的统一高带宽提高位置精度，但腕部轻微超调使其姿态 RMSE 高于 PD。
 
 #figure(
   table(
@@ -295,120 +240,98 @@ PD 的关节 RMSE 为 #f2(pd-nom.at("joint_rmse_deg"))°，小于计算力矩控
   caption: [控制器实验指标汇总],
 )
 
-标称场景下计算力矩控制的末端 RMSE 为 #f2(ctc-nom.at("ee_rmse_mm")) mm，带惯性前馈的 PD 为 #f2(pd-nom.at("ee_rmse_mm")) mm，两者均满足小于 5 mm 的预设指标；抗扰场景下 CTC 为 #f2(ctc-dis.at("ee_rmse_mm")) mm，撤力后 #f2(ctc-dis.at("recovery_s")) s 内恢复至 10 mm 以内。两种控制器的峰值电流均为 #f2(ctc-nom.at("peak_current_a")) A，瞬时饱和占比小于 0.01%，因此标称跟踪性能的剩余差异来自反馈通道的增益结构，而非执行器容量限制。抗扰性能的巨大差异则揭示了前馈与反馈的本质分工：$M(q)dot.double(q)_d$ 消除了跟踪滞后，但只有高反馈增益才能有效抑制突发外力。
+#figure(
+  image("../figures/joint_current.png", width: 88%),
+  caption: [标称场景下计算力矩控制的关节响应与 PMSM q 轴电流],
+)
+
+#figure(
+  grid(
+    columns: (1.32fr, 1fr),
+    gutter: 8pt,
+    image("../figures/tracking_error.png", width: 100%),
+    image("../figures/metrics_comparison.png", width: 100%),
+  ),
+  caption: [标称与 15 N 外力场景的末端误差及 RMSE 汇总],
+)
+
+15 N 外力下，CTC 将 RMSE 从 #f2(pd-dis.at("ee_rmse_mm")) mm 降至 #f2(ctc-dis.at("ee_rmse_mm")) mm，并在撤力后 #f2(ctc-dis.at("recovery_s")) s 恢复至 10 mm 内。两种控制器峰值电流相同且饱和率小于 0.01%，故差异来自 CTC 的反馈惯性解耦与更高等效刚度，而非执行器容量。该实验评价固定外力下的反馈抗扰能力，不构成参数不确定性意义下的鲁棒性证明。
 
 = 柔顺对接扩展实验
 
 == 场景与评价方法
 
-在不改变上述组合轨迹实验的前提下，另建独立的 `scene_docking.xml`。末端和固定端均使用经原作者授权的对接件网格 @langxin2026docking；MuJoCo 以该 STL 直接生成原生 SDF 碰撞几何，从而保留非凸键槽轮廓及多点接触。公端可视网格、SDF 碰撞网格和母端均使用同一 40° 安装偏航；母端进一步绕插入轴错开 45°，使凸缘与键槽互补。另提供不含机械臂的 `scene_docking_interfaces.xml` 直接检查公母接口相对位姿。该刚体接触模型用于评估柔顺接近、法向接触和保持力，不宣称复刻完整锁止机构的材料变形、公差和有限元细节。
+独立场景 `scene_docking.xml` 使用经授权的非凸对接件网格 @langxin2026docking，并以 MuJoCo SDF 保留键槽轮廓和多点接触。公、母端安装偏航均为 40°，母端再绕插入轴错开 45°。11 s 任务依次为保持（0--1 s）、接近（1--5 s）、插入（5--7 s）和接触保持（7--11 s）；参考端面间距由 55 mm 减至 45 mm。首次接触后冻结位姿参考，并在 1.5 s 内升起 5 N 保持力。
 
-#figure(
-  image("../figures/docking_interface_alignment.png", width: 58%),
-  caption: [无机械臂接口对中检查：橙色公端与半透明蓝色母端共享安装偏航，端面相对且绕插入轴错开 45°],
-)
+评价向量为
 
-对接总时长为 11 s：0--1 s 保持初始位姿，1--5 s 沿工具坐标系 z 轴靠近，5--7 s 从 55 mm 端面间距受控插入至 45 mm，7--11 s 保持。首次 SDF 接触出现后，位置参考锁定在该接触位姿，5 N 虚拟保持力在 1.5 s 内按五次时间缩放升起，以避免保持阶段的二次冲击。阻抗控制器采用 §5.3 所述的 $Lambda$ 基临界阻尼和 sigmoid 自适应刚度（$k_alpha=0.5$，$K_min$ 平动 30 N/m、转动 8 N·m/rad），在自由空间保持高跟踪刚度、接触后自动柔化以降低冲击力。
+$ cal(M)={F_"peak",F_"hold",d_"ins",e_"lat",e_R,p_"contact",I_"peak"}, $
 
-参照 Ren & Shan (2026) @ren2026unified 的三层评价体系，指标按 mission 优先级组织：
-
-#figure(
-  table(
-    columns: (1.5cm, 5.0cm, 6.0cm),
-    stroke: 0.5pt,
-    inset: 5pt,
-    align: (center, left, left),
-    table.header([层级], [指标], [判据]),
-    [物理交互安全], [峰值轴向力 $|F_z|_"max"$、稳态轴向力 $|F_z|_"fin"$、稳态接触力均值], [越低越安全；保持段接触 >90% 视为完成],
-    [内部系统安全], [峰值电流、峰值电压、饱和率], [不触发硬件限幅为通过],
-    [任务跟踪性能], [最终位置/姿态偏差], [允许适度偏移以换取柔顺交互],
-  ),
-  caption: [柔顺对接三层评价指标],
-)
-
-评价侧重点与 §6.1 不同：对接不以毫米级跟踪精度为目标——允许的柔顺偏差正是吸收接触冲击、保护工件的手段。
+分别表示峰值/保持接触力、插入深度、横向/姿态偏差、保持接触率和峰值电流；$p_"contact">90%$ 判定任务完成。对接允许有限位姿让步，以接触安全和插入完成度为主要目标。
 
 == 接触结果与讨论
 
 #figure(
-  image("../figures/docking_contact_response.png", width: 92%),
-  caption: [关节空间逆动力学轨迹跟踪与笛卡尔空间自适应阻抗控制的接触力和末端偏差；浅绿色区域为保持段],
+  image("../figures/docking_contact_response.png", width: 88%),
+  caption: [逆动力学跟踪与笛卡尔阻抗控制的接触响应],
 )
 
 #figure(
-  image("../figures/docking_metrics.png", width: 92%),
-  caption: [柔顺对接的接触力与最终位置偏差量化对比],
+  grid(
+    columns: (0.72fr, 1.28fr),
+    gutter: 10pt,
+    image("../figures/docking_interface_alignment.png", width: 100%),
+    image("../figures/docking_metrics.png", width: 100%),
+  ),
+  caption: [对接接口相对位姿与接触性能量化比较],
 )
 
 #figure(
   table(
-    columns: (1.4cm, 1.7cm, 1.7cm, 1.7cm, 1.7cm, 1.7cm, 1.7cm),
+    columns: (2.2cm, 2.1cm, 1.6cm, 1.6cm, 1.6cm, 1.8cm, 1.7cm),
     stroke: 0.5pt,
     inset: 4pt,
     align: center,
-    table.header([控制器], [接触/s], [峰值力/N], [保持力/N], [横向/mm], [轴向/mm], [姿态/°]),
-    [关节空间逆动力学], [#f2(docking-ctc.at("contact_start_s"))], [#f2(docking-ctc.at("peak_contact_force_n"))], [#f2(docking-ctc.at("steady_contact_force_n"))], [#f2(docking-ctc.at("lateral_error_final_mm"))], [#f2(docking-ctc.at("axial_error_final_mm"))], [#f2(docking-ctc.at("alignment_angle_deg"))],
-    [笛卡尔空间阻抗], [#f2(docking-impedance.at("contact_start_s"))], [#f2(docking-impedance.at("peak_contact_force_n"))], [#f2(docking-impedance.at("steady_contact_force_n"))], [#f2(docking-impedance.at("lateral_error_final_mm"))], [#f2(docking-impedance.at("axial_error_final_mm"))], [#f2(docking-impedance.at("alignment_angle_deg"))],
+    table.header([控制器], [峰值/保持力 N], [插入/mm], [横向/mm], [姿态/°], [保持接触/%], [峰值电流/A]),
+    [逆动力学], [#f2(docking-ctc.at("peak_contact_force_n")) / #f2(docking-ctc.at("steady_contact_force_n"))], [#f2(docking-ctc.at("insertion_depth_mm"))], [#f2(docking-ctc.at("lateral_error_final_mm"))], [#f2(docking-ctc.at("alignment_angle_deg"))], [#f2(docking-ctc.at("hold_contact_percent"))], [#f2(docking-ctc.at("peak_current_a"))],
+    [笛卡尔阻抗], [#f2(docking-impedance.at("peak_contact_force_n")) / #f2(docking-impedance.at("steady_contact_force_n"))], [#f2(docking-impedance.at("insertion_depth_mm"))], [#f2(docking-impedance.at("lateral_error_final_mm"))], [#f2(docking-impedance.at("alignment_angle_deg"))], [#f2(docking-impedance.at("hold_contact_percent"))], [#f2(docking-impedance.at("peak_current_a"))],
   ),
-  caption: [柔顺对接量化指标（横向 = 垂直于插入轴的偏差，轴向 = 沿插入方向）],
+  caption: [柔顺对接量化指标],
 )
 
-#figure(
-  table(
-    columns: (1.6cm, 2.2cm, 2.4cm, 2.6cm, 2.4cm),
-    stroke: 0.5pt,
-    inset: 5pt,
-    align: center,
-    table.header([控制器], [插入深度/mm], [保持接触/%], [保持段接触点数], [峰值电流/A]),
-    [关节空间逆动力学], [#f2(docking-ctc.at("insertion_depth_mm"))], [#f2(docking-ctc.at("hold_contact_percent"))], [#f2(docking-ctc.at("avg_contact_points_hold"))], [#f2(docking-ctc.at("peak_current_a"))],
-    [笛卡尔空间阻抗], [#f2(docking-impedance.at("insertion_depth_mm"))], [#f2(docking-impedance.at("hold_contact_percent"))], [#f2(docking-impedance.at("avg_contact_points_hold"))], [#f2(docking-impedance.at("peak_current_a"))],
-  ),
-  caption: [柔顺对接补充指标],
-)
-
-两种控制器均通过配置的完成判据。关节空间逆动力学轨迹跟踪的接触始于 #f2(docking-ctc.at("contact_start_s")) s，峰值接触力为 #f2(docking-ctc.at("peak_contact_force_n")) N，保持段均值为 #f2(docking-ctc.at("steady_contact_force_n")) N——其闭环仅提供 $Lambda^(-1)F_"ext"$ 的纯惯性响应，接触力主要由非凸网格几何和物理参数决定，横向偏差为 #f2(docking-ctc.at("lateral_error_final_mm")) mm。
-
-笛卡尔空间阻抗控制在 #f2(docking-impedance.at("contact_start_s")) s 首次接触。峰值和保持段接触力分别为 #f2(docking-impedance.at("peak_contact_force_n")) N 与 #f2(docking-impedance.at("steady_contact_force_n")) N，相对关节空间逆动力学分别降低约 #reduction(docking-ctc.at("peak_contact_force_n"), docking-impedance.at("peak_contact_force_n"))% 和 #reduction(docking-ctc.at("steady_contact_force_n"), docking-impedance.at("steady_contact_force_n"))%。轴向偏差 #f2(docking-impedance.at("axial_error_final_mm")) mm 对应 #f2(docking-impedance.at("insertion_depth_mm")) mm 的插入深度，高于关节空间逆动力学的 #f2(docking-ctc.at("insertion_depth_mm")) mm；横向偏差为 #f2(docking-impedance.at("lateral_error_final_mm")) mm，高于关节空间逆动力学的 #f2(docking-ctc.at("lateral_error_final_mm")) mm。这说明该组参数优先降低接触冲击和保持力，并以适度横向让位换取更深插入。
-
-三层指标中，笛卡尔空间阻抗控制在"物理交互安全"层以较低的峰值力和保持力占优，并取得更深插入；关节空间逆动力学在该组参数下取得更小的横向偏差，但代价是更高接触力。两者在"内部系统安全"层均无饱和。该对比表明：#strong[对接质量不能仅以总位置偏差排序]——横向偏差衡量对中精度，插入深度衡量配合程度，接触力衡量安全性，三者构成不可互相替代的多目标评价空间。
+两种控制器均满足完成判据。阻抗控制将峰值和保持力分别降低 #reduction(docking-ctc.at("peak_contact_force_n"), docking-impedance.at("peak_contact_force_n"))% 和 #reduction(docking-ctc.at("steady_contact_force_n"), docking-impedance.at("steady_contact_force_n"))%，插入深度由 #f2(docking-ctc.at("insertion_depth_mm")) mm 增至 #f2(docking-impedance.at("insertion_depth_mm")) mm；代价是横向偏差增至 #f2(docking-impedance.at("lateral_error_final_mm")) mm。两者均未触发执行器饱和，说明阻抗控制以有限让位换取了更低接触力和更深插入。
 
 = 结论与展望
 
-本报告完成了一个七自由度 FR3 机械臂的高阶运动控制仿真。系统沿"期望轨迹 → 控制器 → 执行器链 → 多刚体动力学 → 状态反馈"的闭环信号路径逐层建模，包含 PMSM q 轴电感、电阻、反电动势、FOC 电流 PI、电压/电流限制、转子惯量、减速器效率和 FR3 官方关节转矩限制，并非简化为理想关节力矩源。通过冗余逆运动学生成连续参考轨迹，在相同执行器约束下比较了带惯性前馈的偏置力补偿 PD 与计算力矩控制，并严格区分了 FR3 官方整机限制、Menagerie 刚体数据和代表性 PMSM 工程假设。
+本文建立了 FR3 多刚体—PMSM/FOC—减速器闭环模型，并完成冗余轨迹规划、偏置补偿 PD 与 CTC 对比。标称位置 RMSE 分别为 #f2(pd-nom.at("ee_rmse_mm")) mm 和 #f2(ctc-nom.at("ee_rmse_mm")) mm；15 N 外力下 CTC 为 #f2(ctc-dis.at("ee_rmse_mm")) mm，较 PD 降低 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%，撤力恢复时间为 #f2(ctc-dis.at("recovery_s")) s。结果表明惯性前馈决定标称跟踪滞后，质量矩阵反馈解耦及增益决定外力抑制能力。
 
-实验表明，在标称组合位姿轨迹下，带惯性前馈的 PD 取得 #f2(pd-nom.at("ee_rmse_mm")) mm 末端位置 RMSE，计算力矩控制取得 #f2(ctc-nom.at("ee_rmse_mm")) mm，仅进一步降低约 #reduction(pd-nom.at("ee_rmse_mm"), ctc-nom.at("ee_rmse_mm"))%。两者在跟踪精度上已十分接近，剩余差距来自 CTC 通过 $M(q)$ 实现的反馈通道惯性解耦和更高的等效刚度。抗扰场景则呈现截然不同的结果：在 15 N 外力下 CTC 取得 #f2(ctc-dis.at("ee_rmse_mm")) mm RMSE，比 PD 降低约 #reduction(pd-dis.at("ee_rmse_mm"), ctc-dis.at("ee_rmse_mm"))%，撤力后恢复时间约 #f2(ctc-dis.at("recovery_s")) s。这一对比清晰地分离了前馈与反馈在运动控制中的不同角色：$M(q)dot.double(q)_d$ 前馈项几乎完全消除了动态跟踪滞后，使 PD 从原来 3.62 mm 的 RMSE 大幅降至接近 CTC 的水平；但外力扰动抑制几乎完全依赖反馈增益——CTC 等效的 $K_p=324$ 远高于 PD 的对角刚度，因而抗扰和恢复性能显著更优。
+柔顺对接中，笛卡尔阻抗控制以有限横向让步换取更低接触力和更深插入。后续可在相同不确定性集合下研究负载自适应或鲁棒补偿，并将碰撞约束纳入在线冗余优化。
 
-独立柔顺对接实验进一步显示，操作空间阻抗控制以可接受的末端让位换取更低的峰值和保持接触力；这为接触敏感任务提供了与刚性轨迹跟踪不同的控制取舍。
+= 附录
 
-后续工作可沿以下方向推进：引入连杆质量和负载的不确定性，考察鲁棒或自适应计算力矩控制的效果；在零空间中纳入可操作度最大化与碰撞约束；将离线逆运动学替换为在线优化控制，在统一框架中同时处理轨迹生成、关节限位、电流约束和障碍物规避。
+== 复现说明
 
-= 附录 A：复现说明
+项目使用 Python 3.12 与 `uv`；主要命令为：
 
-项目使用 Python 3.12 和 `uv` 管理依赖，主要命令如下：
+- `uv run fr3-control run-experiments` / `plot-results`：轨迹实验与绘图；
+- `uv run fr3-control run-docking-experiments` / `plot-docking-results`：对接实验与绘图；
+- `MUJOCO_GL=egl uv run fr3-control render-video` / `render-docking-video`：视频渲染；
+- `uv run pytest`：模型、轨迹、执行器和闭环验证。
 
-- `uv run fr3-control run-experiments`：生成四组实验的 NPZ、CSV 和 JSON 数据；
-- `uv run fr3-control plot-results`：生成报告插图；
-- `MUJOCO_GL=egl uv run fr3-control render-video`：渲染演示视频（需要 EGL 支持）；
-- `uv run fr3-control run-docking-experiments`：运行关节空间逆动力学与笛卡尔空间阻抗控制的柔顺对接实验；
-- `uv run fr3-control plot-docking-results`：生成对接接触力与偏差图；
-- `MUJOCO_GL=egl uv run fr3-control render-docking-video`：渲染柔顺对接对比视频；
-- `MUJOCO_GL=egl uv run fr3-control render-docking-interface-preview`：渲染无机械臂的接口对中检查图；
-- `uv run pytest`：验证电机单位换算、限幅、质量矩阵、轨迹连续性和完整闭环仿真。
+实验采用确定性初始状态；报告数值由 `results/summary.json` 与 `results/docking_summary.json` 自动读取。
 
-所有实验使用固定参数和确定性初始状态。报告中的数值直接从 `results/summary.json` 读取，重新运行实验并编译 Typst 后可自动更新。
-
-= 附录 B：课程知识点对照
+== 课程知识点对照
 
 #figure(
   table(
     columns: (1.2cm, 3cm, 10.2cm),
     stroke: 0.5pt,
-    inset: 7pt,
+    inset: 5pt,
     align: (center, center, left),
     table.header([序号], [课程内容], [本项目中的对应知识点]),
     [1], [陈老师], [轨迹规划、正逆运动学、多刚体动力学、逆动力学控制、跟踪误差分析],
     [2], [李老师], [由直流电机基本电磁关系推广至 PMSM 的 q 轴等效模型、反电动势、电机惯量、减速器、电流环和多速率离散控制],
-    [3], [余老师], [[待补充第 12--16 周知识点及其与本项目的对应关系]],
+    [3], [余老师], [重力补偿 PD、偏置力补偿、逆动力学/计算力矩控制及反馈线性化；本项目通过带惯性前馈的偏置补偿 PD 与计算力矩控制的对比，分析模型补偿、反馈解耦和外力抗扰性能。],
   ),
   caption: [三位老师知识点与项目内容的对应关系],
 )
